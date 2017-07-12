@@ -1,3 +1,39 @@
+//! A crate for generating transport agnostic, auto serializing, strongly typed JSONRPC-2.0 clients
+//!
+//! This crate mainly provides a macro, `jsonrpc_client`. The macro is be used to generate
+//! structs for calling JSONRPC-2.0 APIs. The macro lets you list methods on the struct with
+//! arguments and a return value. The macro then generates a struct which will automatically
+//! serialize the arguments, send the request and deserialize the response into the target type.
+//!
+//! # Example
+//!
+//! Look at the `ExampleRpcClient` struct in this crate. It uses the library to generate itself.
+//!
+//! Here is an example of how to generate and use a client struct:
+//!
+//! ```ignore
+//! #[macro_use] extern crate jsonrpc_client_core;
+//! extern crate jsonrpc_client_http;
+//!
+//! use jsonrpc_client_http::HttpTransport;
+//!
+//! jsonrpc_client!(pub struct FizzBuzzClient {
+//!     /// Returns the fizz-buzz string for the given number.
+//!     pub fn fizz_buzz(&mut self, number: u64) -> Result<String>;
+//! });
+//!
+//! fn main() {
+//!     let transport = HttpTransport::new("https://api.fizzbuzzexample.org/rpc/").unwrap();
+//!     let mut client = FizzBuzzClient::new(transport);
+//!     let result1 = client.fizz_buzz(3).unwrap();
+//!     let result2 = client.fizz_buzz(4).unwrap();
+//!     let result3 = client.fizz_buzz(5).unwrap();
+//!     // Should print "fizz 4 buzz" if the server implemented the service correctly
+//!     println!("{} {} {}", result1, result2, result3);
+//! }
+//! ```
+//!
+
 #[macro_use]
 extern crate error_chain;
 #[macro_use]
@@ -142,6 +178,8 @@ jsonrpc_client!(
     /// Just an example RPC client to showcase how to use the `jsonrpc_client` macro and what
     /// the resulting structs look like.
     pub struct ExampleRpcClient {
+        /// A method without any arguments and with a null return value. Can still of course have
+        /// lots of side effects on the server where it executes.
         pub fn nullary(&mut self) -> Result<()>;
 
         pub fn echo(&mut self, input: String) -> Result<String>;
