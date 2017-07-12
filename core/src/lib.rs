@@ -17,8 +17,9 @@ error_chain! {
             description("Unable to serialize the method parameters")
         }
         /// Error while deserializing or parsing the response data.
-        DeserializeError {
+        DeserializeError(msg: String) {
             description("Unable to deserialize the response into the desired type")
+            display("Unable to deserialize the response: {}", msg)
         }
     }
 }
@@ -109,23 +110,33 @@ where
 
 /// Parses a binary response into json, extracts the "result" field and tries to deserialize that
 /// to the desired type
-pub fn parse_response<T>(response: &[u8]) -> Result<T>
+fn parse_response<T>(response: &[u8]) -> Result<T>
 where
     for<'de> T: serde::Deserialize<'de>,
 {
+    let result_json = get_result_field(response)?;
+    debug!("Received json result: {}", result_json);
+    serde_json::from_value::<T>(result_json).chain_err(|| {
+        ErrorKind::DeserializeError(format!("Result cannot deserialize to {}", stringify!(T)))
+    })
+}
+
+/// Deserialize the response as json and fetch the "result" field from it.
+fn get_result_field(response: &[u8]) -> Result<serde_json::Value> {
     let response_json = serde_json::from_slice(response)
-        .chain_err(|| ErrorKind::DeserializeError)?;
+        .chain_err(|| {
+            ErrorKind::DeserializeError("Response is not valid json".to_string())
+        })?;
     let result_json = match response_json {
         serde_json::Value::Object(mut map) => map.remove("result"),
         _ => None,
     };
-    if let Some(result_json) = result_json {
-        debug!("Received json response: {}", result_json);
-        serde_json::from_value::<T>(result_json).chain_err(|| ErrorKind::DeserializeError)
-    } else {
-        Err(ErrorKind::DeserializeError.into())
-    }
+    result_json.ok_or(
+        ErrorKind::DeserializeError("Response has no \"result\" field".to_string()).into(),
+    )
 }
+
+
 
 jsonrpc_client!(
     /// Just an example RPC client to showcase how to use the `jsonrpc_client` macro and what
