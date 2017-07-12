@@ -1,0 +1,10 @@
+[package]
+name = "jsonrpc-client-core"
+version = "0.1.0"
+authors = ["Linus Färnstrand <linus@mullvad.net>"]
+
+[dependencies]
+error-chain = "0.10"
+log = "0.3"
+serde = "1.0"
+serde_json = "1.0"
