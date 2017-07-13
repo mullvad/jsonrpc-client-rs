@@ -54,7 +54,7 @@ error_chain! {
             description("Unable to serialize the method parameters")
         }
         /// Error while deserializing or parsing the response data.
-        DeserializeError(msg: String) {
+        ResponseError(msg: &'static str) {
             description("Unable to deserialize the response into the desired type")
             display("Unable to deserialize the response: {}", msg)
         }
@@ -155,42 +155,43 @@ fn parse_response<T>(response: &[u8]) -> Result<T>
 where
     for<'de> T: serde::Deserialize<'de>,
 {
-    let mut response_map = get_response_as_map(response)?;
-    ensure!(
-        response_map.remove("jsonrpc") == Some(serde_json::Value::String("2.0".to_owned())),
-        ErrorKind::DeserializeError("Response is not JSON-RPC 2.0 compatible".to_string())
-    );
-    ensure!(
-        response_map.remove("id") == Some(1.into()),
-        ErrorKind::DeserializeError("Response id not equal to request id".to_string())
-    );
-    if let Some(error_json) = response_map.remove("error") {
-        let error = json_value_to_rpc_error(error_json)
-            .chain_err(|| {
-                ErrorKind::DeserializeError("Malformed error object".to_string())
-            })?;
-        bail!(ErrorKind::JsonRpcError(error));
-    }
-    if let Some(result) = response_map.remove("result") {
-        debug!("Received json result: {}", result);
-        serde_json::from_value::<T>(result).chain_err(|| {
-            ErrorKind::DeserializeError(format!("Result cannot deserialize to {}", stringify!(T)))
-        })
-    } else {
-        bail!(ErrorKind::DeserializeError("Response has no \"result\" field".to_string()))
-    }
+    let response_map = get_response_as_map(response)?;
+    let result_json = check_response_and_get_result(response_map)?;
+    debug!("Received json result: {}", result_json);
+    serde_json::from_value::<T>(result_json).chain_err(|| {
+        ErrorKind::ResponseError("Result cannot deserialize to target type")
+    })
 }
 
 fn get_response_as_map(response: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>> {
     let response_json = serde_json::from_slice(response)
-        .chain_err(|| {
-            ErrorKind::DeserializeError("Response is not valid json".to_string())
-        })?;
+        .chain_err(|| ErrorKind::ResponseError("Response is not valid json"))?;
     if let serde_json::Value::Object(map) = response_json {
         Ok(map)
     } else {
-        bail!(ErrorKind::DeserializeError("Response is not a json object".to_string()))
+        Err(ErrorKind::ResponseError("Response is not a json object").into())
     }
+}
+
+fn check_response_and_get_result(
+    mut response_map: serde_json::Map<String, serde_json::Value>,
+) -> Result<serde_json::Value> {
+    ensure!(
+        response_map.remove("jsonrpc") == Some(serde_json::Value::String("2.0".to_owned())),
+        ErrorKind::ResponseError("Response is not JSON-RPC 2.0 compatible")
+    );
+    ensure!(
+        response_map.remove("id") == Some(1.into()),
+        ErrorKind::ResponseError("Response id not equal to request id")
+    );
+    if let Some(error_json) = response_map.remove("error") {
+        let error = json_value_to_rpc_error(error_json)
+            .chain_err(|| ErrorKind::ResponseError("Malformed error object"))?;
+        bail!(ErrorKind::JsonRpcError(error));
+    }
+    response_map.remove("result").ok_or(
+        ErrorKind::ResponseError("Response has no \"result\" field").into(),
+    )
 }
 
 fn json_value_to_rpc_error(
@@ -198,28 +199,23 @@ fn json_value_to_rpc_error(
 ) -> Result<jsonrpc_core::types::error::Error> {
     let map = error_json
         .as_object_mut()
-        .ok_or(ErrorKind::DeserializeError(
-            "Error is not a json object".to_string(),
-        ))?;
+        .ok_or(ErrorKind::ResponseError("Error is not a json object"))?;
     let code = map.remove("code")
-        .ok_or(
-            ErrorKind::DeserializeError("Error has no code field".to_string()).into(),
-        )
+        .ok_or(ErrorKind::ResponseError("Error has no code field").into())
         .and_then(|code| {
-            serde_json::from_value(code).chain_err(|| {
-                ErrorKind::DeserializeError("Malformed code field".to_string())
-            })
+            serde_json::from_value(code)
+                .chain_err(|| ErrorKind::ResponseError("Malformed code field in error"))
         })?;
     let message = map.get("message")
         .and_then(|v| v.as_str())
-        .ok_or(ErrorKind::DeserializeError(
-            "Error has no message field".to_string(),
+        .ok_or(ErrorKind::ResponseError(
+            "Error has no message field of string type",
         ))?
         .to_owned();
 
     Ok(jsonrpc_core::types::error::Error {
         code: code,
-        message: message.to_owned(),
+        message: message,
         data: map.remove("data"),
     })
 }
