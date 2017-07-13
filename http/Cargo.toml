@@ -10,6 +10,3 @@ hyper = "0.11"
 hyper-tls = "0.1"
 jsonrpc-client-core = { path = "../core" }
 tokio-core = "0.1"
-
-[dev-dependencies]
-env_logger = "0.4"
