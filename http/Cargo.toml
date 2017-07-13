@@ -1,7 +1,7 @@
 [package]
 name = "jsonrpc-client-http"
 version = "0.1.0"
-authors = ["Linus Färnstrand <linus@mullvad.net>"]
+authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A transport implementation for jsonrpc-client-core based on Hyper and futures"
 keywords = ["jsonrpc", "rpc", "client", "http", "https"]
 categories = ["network-programming", "web-programming", "web-programming::http-client"]
