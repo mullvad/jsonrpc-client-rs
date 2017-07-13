@@ -36,6 +36,7 @@
 
 #[macro_use]
 extern crate error_chain;
+extern crate jsonrpc_core;
 #[macro_use]
 extern crate serde_json;
 extern crate serde;
@@ -56,6 +57,10 @@ error_chain! {
         DeserializeError(msg: String) {
             description("Unable to deserialize the response into the desired type")
             display("Unable to deserialize the response: {}", msg)
+        }
+        JsonRpcError(error: jsonrpc_core::types::error::Error) {
+            description("Method call returned JSON-RPC-2.0 error")
+            display("JSON-RPC-2.0 Error: {} ({})", error.code.description(), error.message)
         }
     }
 }
@@ -145,31 +150,78 @@ where
 
 
 /// Parses a binary response into json, extracts the "result" field and tries to deserialize that
-/// to the desired type
+/// to the desired type.
 fn parse_response<T>(response: &[u8]) -> Result<T>
 where
     for<'de> T: serde::Deserialize<'de>,
 {
-    let result_json = get_result_field(response)?;
-    debug!("Received json result: {}", result_json);
-    serde_json::from_value::<T>(result_json).chain_err(|| {
-        ErrorKind::DeserializeError(format!("Result cannot deserialize to {}", stringify!(T)))
-    })
+    let mut response_map = get_response_as_map(response)?;
+    ensure!(
+        response_map.remove("jsonrpc") == Some(serde_json::Value::String("2.0".to_owned())),
+        ErrorKind::DeserializeError("Response is not JSON-RPC 2.0 compatible".to_string())
+    );
+    ensure!(
+        response_map.remove("id") == Some(1.into()),
+        ErrorKind::DeserializeError("Response id not equal to request id".to_string())
+    );
+    if let Some(error_json) = response_map.remove("error") {
+        let error = json_value_to_rpc_error(error_json)
+            .chain_err(|| {
+                ErrorKind::DeserializeError("Malformed error object".to_string())
+            })?;
+        bail!(ErrorKind::JsonRpcError(error));
+    }
+    if let Some(result) = response_map.remove("result") {
+        debug!("Received json result: {}", result);
+        serde_json::from_value::<T>(result).chain_err(|| {
+            ErrorKind::DeserializeError(format!("Result cannot deserialize to {}", stringify!(T)))
+        })
+    } else {
+        bail!(ErrorKind::DeserializeError("Response has no \"result\" field".to_string()))
+    }
 }
 
-/// Deserialize the response as json and fetch the "result" field from it.
-fn get_result_field(response: &[u8]) -> Result<serde_json::Value> {
+fn get_response_as_map(response: &[u8]) -> Result<serde_json::Map<String, serde_json::Value>> {
     let response_json = serde_json::from_slice(response)
         .chain_err(|| {
             ErrorKind::DeserializeError("Response is not valid json".to_string())
         })?;
-    let result_json = match response_json {
-        serde_json::Value::Object(mut map) => map.remove("result"),
-        _ => None,
-    };
-    result_json.ok_or(
-        ErrorKind::DeserializeError("Response has no \"result\" field".to_string()).into(),
-    )
+    if let serde_json::Value::Object(map) = response_json {
+        Ok(map)
+    } else {
+        bail!(ErrorKind::DeserializeError("Response is not a json object".to_string()))
+    }
+}
+
+fn json_value_to_rpc_error(
+    mut error_json: serde_json::Value,
+) -> Result<jsonrpc_core::types::error::Error> {
+    let map = error_json
+        .as_object_mut()
+        .ok_or(ErrorKind::DeserializeError(
+            "Error is not a json object".to_string(),
+        ))?;
+    let code = map.remove("code")
+        .ok_or(
+            ErrorKind::DeserializeError("Error has no code field".to_string()).into(),
+        )
+        .and_then(|code| {
+            serde_json::from_value(code).chain_err(|| {
+                ErrorKind::DeserializeError("Malformed code field".to_string())
+            })
+        })?;
+    let message = map.get("message")
+        .and_then(|v| v.as_str())
+        .ok_or(ErrorKind::DeserializeError(
+            "Error has no message field".to_string(),
+        ))?
+        .to_owned();
+
+    Ok(jsonrpc_core::types::error::Error {
+        code: code,
+        message: message.to_owned(),
+        data: map.remove("data"),
+    })
 }
 
 
@@ -205,8 +257,26 @@ mod tests {
         fn send(&mut self, json_data: &[u8]) -> ::std::result::Result<Vec<u8>, io::Error> {
             let json = json!({
                 "jsonrpc": "2.0",
-                "id": 123,
+                "id": 1,
                 "result": serde_json::from_slice::<serde_json::Value>(json_data).unwrap(),
+            });
+            Ok(serde_json::to_vec(&json).unwrap())
+        }
+    }
+
+    /// A transport that always returns an "Invalid request" error
+    struct ErrorTransport;
+
+    impl Transport<io::Error> for ErrorTransport {
+        fn send(&mut self, _json_data: &[u8]) -> ::std::result::Result<Vec<u8>, io::Error> {
+            let json = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": {
+                    "code": -32600,
+                    "message": "This was an invalid request",
+                    "data": [1, 2, 3],
+                }
             });
             Ok(serde_json::to_vec(&json).unwrap())
         }
@@ -227,6 +297,20 @@ mod tests {
             assert_eq!(Some(serde_json::Value::Array(vec!["Hello".into()])), map.remove("params"));
         } else {
             panic!("Invalid response type: {:?}", result);
+        }
+    }
+
+    #[test]
+    fn error() {
+        let mut client = TestRpcClient::new(ErrorTransport);
+        let error = client.ping("".to_string()).unwrap_err();
+        if let &ErrorKind::JsonRpcError(ref json_error) = error.kind() {
+            use jsonrpc_core::types::error::ErrorCode;
+            assert_eq!(ErrorCode::InvalidRequest, json_error.code);
+            assert_eq!("This was an invalid request", json_error.message);
+            assert_eq!(Some(json!{[1, 2, 3]}), json_error.data);
+        } else {
+            panic!("Wrong error kind");
         }
     }
 }
