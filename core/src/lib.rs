@@ -108,12 +108,21 @@ macro_rules! jsonrpc_client {
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*) -> $crate::Result<$return_ty> {
                     $selff.id += 1;
                     let method = stringify!($method);
-                    let params = ($($arg_name,)*);
+                    let params = expand_params!($($arg_name,)*);
                     $crate::call_method(&mut $selff.transport, $selff.id, method, params)
                 }
             )*
         }
     )
+}
+
+/// Expands a variable list of parameters into its serializable form. Is needed to make the params
+/// of a nullary method `[]` instead of `()` and thus make sure it serializes to `[]` intead of
+/// `null`.
+#[macro_export]
+macro_rules! expand_params {
+    () => ([] as [(); 0]);
+    ($($arg_name:ident,)+) => (($($arg_name,)+))
 }
 
 
