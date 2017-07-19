@@ -13,5 +13,5 @@ error-chain = "0.10"
 futures = "0.1"
 hyper = "0.11"
 hyper-tls = "0.1"
-jsonrpc-client-core = { path = "../core" }
+jsonrpc-client-core = "0.1"
 tokio-core = "0.1"
