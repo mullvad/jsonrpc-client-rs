@@ -1,5 +1,5 @@
 // Copyright 2017 Amagicom AB.
-
+//
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
@@ -9,39 +9,38 @@
 
 //! A crate for generating transport agnostic, auto serializing, strongly typed JSON-RPC 2.0 clients
 //!
-//! This crate mainly provides a macro, `jsonrpc_client`. The macro is be used to generate
-//! structs for calling JSON-RPC 2.0 APIs. The macro lets you list methods on the struct with
-//! arguments and a return value. The macro then generates a struct which will automatically
+//! This crate mainly provides a macro, `jsonrpc_client`. The macro generates structs that can be
+//! used for calling JSON-RPC 2.0 APIs. The macro lets you list methods on the struct with
+//! arguments and a return type. The macro then generates a struct which will automatically
 //! serialize the arguments, send the request and deserialize the response into the target type.
 //!
 //! # Example
 //!
-//! Look at the `ExampleRpcClient` struct in this crate. It uses the library to generate itself.
-//!
-//! Here is an example of how to generate and use a client struct:
-//!
-//! ```ignore
+//! ```rust,no_run
 //! #[macro_use] extern crate jsonrpc_client_core;
 //! extern crate jsonrpc_client_http;
 //!
-//! use jsonrpc_client_http::HttpTransport;
+//! use jsonrpc_client_http::HttpCore;
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number.
-//!     pub fn fizz_buzz(&mut self, number: u64) -> Result<String>;
+//!     pub fn fizz_buzz(&mut self, number: u64) -> RpcRequest<String>;
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::new("https://api.fizzbuzzexample.org/rpc/").unwrap();
-//!     let mut client = FizzBuzzClient::new(transport);
-//!     let result1 = client.fizz_buzz(3).unwrap();
-//!     let result2 = client.fizz_buzz(4).unwrap();
-//!     let result3 = client.fizz_buzz(5).unwrap();
+//!     let transport = HttpCore::standalone().unwrap();
+//!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
+//!     let mut client = FizzBuzzClient::new(transport_handle);
+//!     let result1 = client.fizz_buzz(3).call().unwrap();
+//!     let result2 = client.fizz_buzz(4).call().unwrap();
+//!     let result3 = client.fizz_buzz(5).call().unwrap();
+//!
 //!     // Should print "fizz 4 buzz" if the server implemented the service correctly
 //!     println!("{} {} {}", result1, result2, result3);
 //! }
 //! ```
 //!
+
 
 #[macro_use]
 extern crate error_chain;
