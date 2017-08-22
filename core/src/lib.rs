@@ -53,6 +53,9 @@ extern crate serde;
 #[macro_use]
 mod macros;
 
+/// Module containing an example client. To show in the docs what a generated struct look like.
+pub mod example;
+
 error_chain! {
     errors {
         /// Error in the underlying transport layer.
@@ -126,24 +129,6 @@ where
 
 
 }
-
-
-jsonrpc_client!(
-    /// Just an example RPC client to showcase how to use the `jsonrpc_client` macro and what
-    /// the resulting structs look like.
-    pub struct ExampleRpcClient {
-        /// A method without any arguments and with a null return value. Can still of course have
-        /// lots of side effects on the server where it executes.
-        pub fn nullary(&mut self) -> Result<()>;
-
-        pub fn echo(&mut self, input: String) -> Result<String>;
-
-        /// Example RPC method named "concat" that takes a `String` and an unsigned integer and
-        /// returns a `String`. From the name one could guess it will concatenate the two
-        /// arguments. But that of course depends on the server where this call is sent.
-        pub fn concat(&mut self, arg0: String, arg1: u64) -> Result<String>;
-    }
-);
 
 
 
