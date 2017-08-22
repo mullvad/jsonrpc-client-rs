@@ -49,8 +49,9 @@ extern crate jsonrpc_core;
 #[macro_use]
 extern crate serde_json;
 extern crate serde;
+/// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
-extern crate log;
+mod macros;
 
 error_chain! {
     errors {
@@ -81,57 +82,10 @@ pub trait Transport<E: ::std::error::Error + Send + 'static> {
 }
 
 
-/// The main macro of this crate. Generates JSON-RPC 2.0 client structs with automatic serialization
-/// and deserialization. Method calls get correct types automatically.
-#[macro_export]
-macro_rules! jsonrpc_client {
-    (
-        $(#[$struct_doc:meta])*
-        pub struct $struct_name:ident {$(
-            $(#[$doc:meta])*
-            pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
-                -> Result<$return_ty:ty>;
-        )*}
-    ) => (
-        $(#[$struct_doc])*
-        pub struct $struct_name<E, T>
-            where E: ::std::error::Error + Send + 'static, T: $crate::Transport<E>
-        {
-            transport: T,
-            id: u64,
-            _error: ::std::marker::PhantomData<E>,
-        }
 
-        impl<E: ::std::error::Error + Send + 'static, T: $crate::Transport<E>> $struct_name<E, T> {
-            /// Creates a new RPC client backed by the given transport implementation.
-            pub fn new(transport: T) -> Self {
-                $struct_name {
-                    transport,
-                    id: 0,
-                    _error: ::std::marker::PhantomData,
-                }
-            }
 
-            $(
-                $(#[$doc])*
-                pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*) -> $crate::Result<$return_ty> {
-                    $selff.id += 1;
-                    let method = stringify!($method);
-                    let params = expand_params!($($arg_name,)*);
-                    $crate::call_method(&mut $selff.transport, $selff.id, method, params)
-                }
-            )*
-        }
-    )
 }
 
-/// Expands a variable list of parameters into its serializable form. Is needed to make the params
-/// of a nullary method `[]` instead of `()` and thus make sure it serializes to `[]` instead of
-/// `null`.
-#[macro_export]
-macro_rules! expand_params {
-    () => ([] as [(); 0]);
-    ($($arg_name:ident,)+) => (($($arg_name,)+))
 }
 
 
