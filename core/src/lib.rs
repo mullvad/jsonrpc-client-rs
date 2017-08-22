@@ -133,17 +133,21 @@ where
     P: serde::Serialize,
     for<'de> R: serde::Deserialize<'de> + Send + 'static,
 {
+    trace!("Serializing call to method \"{}\" with id {}", method, id);
     let request = serialize_request(id, method, params).chain_err(|| ErrorKind::SerializeError);
+    let method_copy1 = method.to_owned();
+    let method_copy2 = method.to_owned();
 
     RpcRequest(
         futures::future::result(request)
             .and_then(move |request_raw| {
-                trace!("Sending JSON-RPC 2.0 call with id {}", id);
+                trace!("Sending call to method \"{}\" with id {} to transport", method_copy1, id);
                 transport
                     .send(request_raw)
                     .map_err(|e| Error::with_chain(e, ErrorKind::TransportError))
             })
             .and_then(move |response_raw: Vec<u8>| {
+                trace!("Deserializing response to method \"{}\" with id {}", method_copy2, id);
                 response::parse::<R>(&response_raw, id)
             })
             .boxed(),
