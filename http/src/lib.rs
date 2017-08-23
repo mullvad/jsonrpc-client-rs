@@ -144,11 +144,7 @@ impl HttpCore {
     ) -> Result<Client<HttpsConnector<HttpConnector>, hyper::Body>> {
         let https_connector =
             HttpsConnector::new(1, handle).chain_err(|| ErrorKind::HttpsConnectorError)?;
-        Ok(
-            Client::configure()
-                .connector(https_connector)
-                .build(handle),
-        )
+        Ok(Client::configure().connector(https_connector).build(handle))
     }
 
     /// Returns a handle to this `HttpCore` valid for a given URI.
