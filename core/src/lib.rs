@@ -241,10 +241,11 @@ mod tests {
         let mut client = TestRpcClient::new(EchoTransport);
         let result = client.ping("Hello").call().unwrap();
         if let JsonValue::Object(mut map) = result {
-            assert_eq!(Some(JsonValue::from("2.0")), map.remove("jsonrpc"));
-            assert_eq!(Some(JsonValue::from(1)), map.remove("id"));
-            assert_eq!(Some(JsonValue::from("ping")), map.remove("method"));
-            assert_eq!(Some(JsonValue::from(vec!["Hello"])), map.remove("params"));
+            assert_eq!(Some(&JsonValue::from("2.0")), map.get("jsonrpc"));
+            assert_eq!(Some(&JsonValue::from(1)), map.get("id"));
+            assert_eq!(Some(&JsonValue::from("ping")), map.get("method"));
+            assert_eq!(Some(&JsonValue::from(vec!["Hello"])), map.get("params"));
+            assert_eq!(4, map.len());
         } else {
             panic!("Invalid response type: {:?}", result);
         }
