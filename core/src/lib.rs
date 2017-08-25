@@ -122,7 +122,7 @@ impl<T> Future for RpcRequest<T> {
 /// `jsonrpc_client` macro.
 pub trait Transport<E: ::std::error::Error + Send + 'static>
     : Clone + Send + 'static {
-    /// Returns an id that has yet not been used on this sender instance. used by the RPC clients
+    /// Returns an id that has not yet been used on this transport. Used by the RPC clients
     /// to fill in the "id" field of a request.
     fn get_next_id(&mut self) -> u64;
 
