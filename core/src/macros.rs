@@ -23,7 +23,6 @@ macro_rules! jsonrpc_client {
             where E: ::std::error::Error + Send + 'static, T: $crate::Transport<E>
         {
             transport: T,
-            id: u64,
             _error: ::std::marker::PhantomData<E>,
         }
 
@@ -32,7 +31,6 @@ macro_rules! jsonrpc_client {
             pub fn new(transport: T) -> Self {
                 $struct_name {
                     transport,
-                    id: 0,
                     _error: ::std::marker::PhantomData,
                 }
             }
@@ -42,10 +40,9 @@ macro_rules! jsonrpc_client {
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
                     -> $crate::RpcRequest<$return_ty>
                 {
-                    $selff.id += 1;
                     let method = stringify!($method);
                     let params = expand_params!($($arg_name,)*);
-                    $crate::call_method($selff.transport.clone(), $selff.id, method, params)
+                    $crate::call_method($selff.transport.clone(), method, params)
                 }
             )*
         }
