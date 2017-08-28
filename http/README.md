@@ -20,6 +20,10 @@ TLS support is compiled if the "tls" feature is activated (it is active by defau
 All the TLS support adds is the convenient builder constructor with TLS activated, at
 `HttpTransport::tls_builder()`.
 
+Please note that the TLS activated transport supports unencrypted HTTP as well. The backing
+`hyper_tls::HttpsConnector` skips TLS if it sees the URI is `http://`. So it is perfectly fine
+to create one TLS activated instance and use for backing all clients, encrypted and not.
+
 ## Usage
 
 ```rust
