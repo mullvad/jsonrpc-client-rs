@@ -11,28 +11,38 @@
 extern crate error_chain;
 extern crate futures;
 extern crate hyper;
-extern crate hyper_tls;
 extern crate jsonrpc_client_core;
 #[macro_use]
 extern crate log;
 extern crate tokio_core;
+
+#[cfg(feature = "tls")]
+extern crate hyper_tls;
+#[cfg(feature = "tls")]
+extern crate native_tls;
 
 use futures::{future, BoxFuture, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 
 use hyper::{Client, Request, StatusCode, Uri};
 use hyper::client::HttpConnector;
+
+#[cfg(feature = "tls")]
 use hyper_tls::HttpsConnector;
 
 use jsonrpc_client_core::Transport;
 
+use std::io;
+use std::marker::PhantomData;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use tokio_core::reactor::{Core, Handle};
 
+mod client_builder;
+pub use client_builder::*;
 
 error_chain! {
     errors {
@@ -57,62 +67,89 @@ error_chain! {
     }
 }
 
-type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 
-/// The main struct of the HTTP transport implementation for `jsonrpc-client-core`.
-///
-/// Can be created both with its own internal Tokio Core running in a separate thread using the
-/// `HttpCore::standalone()` constructor. Or can run on an existing Tokio Core if created with the
-/// `HttpCore::shared(&handle)` constructor.
-#[derive(Clone)]
-pub struct HttpCore {
-    request_tx: CoreSender,
-    id: Arc<AtomicUsize>,
+/// Builder struct for `HttpTransport`. Created from static metods on `HttpTransport`.
+#[derive(Debug)]
+pub struct HttpTransportBuilder<C, E, CB>
+where
+    C: hyper::client::Connect,
+    E: ::std::error::Error + Send + 'static,
+    CB: ClientBuilder<C, E>,
+{
+    client_builder: CB,
+    _connect_marker: PhantomData<C>,
+    _error_marker: PhantomData<E>,
+
+    handle: Option<Handle>,
 }
 
-impl HttpCore {
-    /// Creates a new `HttpCore` running on an existing Tokio Core.
-    pub fn shared(handle: &Handle) -> Result<Self> {
-        let client = Self::create_client(handle)?;
-        let (request_tx, request_rx) = mpsc::unbounded();
-        handle.spawn(Self::create_request_processing_future(request_rx, client));
-        Ok(HttpCore::new(request_tx))
-    }
-
-    /// Spawns a Tokio Core event loop in a new thread and returns a `HttpCore` based on
-    /// this internal event loop. The thread and the event loop will run for as long as the
-    /// returned `HttpCore`, or any `HttpHandle` to it, exists.
-    ///
-    /// Use `HttpCore::shared()` To create an instance that operate on a Tokio Core managed by you.
-    pub fn standalone() -> Result<Self> {
-        let (tx, rx) = ::std::sync::mpsc::channel();
-        thread::spawn(move || {
-            match Self::create_standalone_core() {
-                Err(e) => {
-                    tx.send(Err(e)).unwrap();
-                }
-                Ok((mut core, request_tx, future)) => {
-                    tx.send(Ok(Self::new(request_tx))).unwrap();
-                    let _ = core.run(future);
-                }
-            }
-            debug!("Standalone HttpCore thread exiting");
-        });
-
-        rx.recv().unwrap()
-    }
-
-    fn new(request_tx: CoreSender) -> Self {
-        HttpCore {
-            request_tx,
-            id: Arc::new(AtomicUsize::new(1)),
+impl<C, E, CB> HttpTransportBuilder<C, E, CB>
+where
+    C: hyper::client::Connect,
+    E: ::std::error::Error + Send + 'static,
+    CB: ClientBuilder<C, E>,
+{
+    /// Change how the Hyper `Client` is created.
+    pub fn client<C2, E2, CB2>(self, builder: CB2) -> HttpTransportBuilder<C2, E2, CB2>
+    where
+        C2: hyper::client::Connect,
+        E2: ::std::error::Error + Send + 'static,
+        CB2: ClientBuilder<C2, E2>,
+    {
+        HttpTransportBuilder {
+            client_builder: builder,
+            _connect_marker: PhantomData,
+            _error_marker: PhantomData,
+            handle: self.handle,
         }
     }
 
-    /// Creates all the components needed to run the `HttpCore` in standalone mode.
-    fn create_standalone_core() -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
+    /// Sets which Tokio `Handle`, and thus which `Core` to run the resulting `HttpTransport` on.
+    ///
+    /// If this method is not called, the default is to spawn a standalone Tokio `Core` in a
+    /// separate thread. The thread and the event loop will run for as long as the
+    /// returned `HttpTransport`, or any `HttpHandle` to it, exists.
+    pub fn handle(mut self, handle: Handle) -> Self {
+        self.handle = Some(handle);
+        self
+    }
+
+    pub fn build(self) -> Result<HttpTransport> {
+        if let Some(handle) = self.handle {
+            let client = self.client_builder
+                .build(&handle)
+                .chain_err(|| ErrorKind::HttpsConnectorError)?;
+            let (request_tx, request_rx) = mpsc::unbounded();
+            handle.spawn(Self::create_request_processing_future(request_rx, client));
+            Ok(HttpTransport::new(request_tx))
+        } else {
+            let (tx, rx) = ::std::sync::mpsc::channel();
+            let client_builder = self.client_builder;
+            thread::spawn(move || {
+                match Self::create_standalone_core(client_builder) {
+                    Err(e) => {
+                        tx.send(Err(e)).unwrap();
+                    }
+                    Ok((mut core, request_tx, future)) => {
+                        tx.send(Ok(HttpTransport::new(request_tx))).unwrap();
+                        let _ = core.run(future);
+                    }
+                }
+                debug!("Standalone HttpTransport thread exiting");
+            });
+
+            rx.recv().unwrap()
+        }
+    }
+
+    /// Creates all the components needed to run the `HttpTransport` in standalone mode.
+    fn create_standalone_core(
+        client_builder: CB,
+    ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
         let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
-        let client = Self::create_client(&core.handle())?;
+        let client = client_builder
+            .build(&core.handle())
+            .chain_err(|| ErrorKind::HttpsConnectorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
         let future = Self::create_request_processing_future(request_rx, client);
         Ok((core, request_tx, future))
@@ -121,8 +158,8 @@ impl HttpCore {
     /// Creates the `Future` that, when running on a Tokio Core, processes incoming RPC call
     /// requests.
     fn create_request_processing_future(
-        request_rx: mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>,
-        client: Client<HttpsConnector<HttpConnector>, hyper::Body>,
+        request_rx: CoreReceiver,
+        client: Client<C, hyper::Body>,
     ) -> Box<Future<Item = (), Error = ()>> {
         let f = request_rx.for_each(move |(request, response_tx)| {
             client
@@ -148,17 +185,58 @@ impl HttpCore {
         });
         Box::new(f) as Box<Future<Item = (), Error = ()>>
     }
+}
 
-    /// Creates and returns the Hyper `Client`.
-    fn create_client(
-        handle: &Handle,
-    ) -> Result<Client<HttpsConnector<HttpConnector>, hyper::Body>> {
-        let https_connector =
-            HttpsConnector::new(1, handle).chain_err(|| ErrorKind::HttpsConnectorError)?;
-        Ok(Client::configure().connector(https_connector).build(handle))
+type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
+type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
+
+/// The main struct of the HTTP transport implementation for `jsonrpc-client-core`.
+///
+/// Created with the `HttpTransportBuilder` builder.
+#[derive(Clone)]
+pub struct HttpTransport {
+    request_tx: CoreSender,
+    id: Arc<AtomicUsize>,
+}
+
+impl HttpTransport {
+    /// Returns the default builder that can be configured and then used to create a
+    /// `HttpTransport` instance.
+    pub fn builder() -> HttpTransportBuilder<HttpConnector, io::Error, DefaultClientBuilder> {
+        HttpTransportBuilder {
+            client_builder: DefaultClientBuilder,
+            _connect_marker: PhantomData,
+            _error_marker: PhantomData,
+            handle: None,
+        }
     }
 
-    /// Returns a handle to this `HttpCore` valid for a given URI.
+    #[cfg(feature = "tls")]
+    /// Returns a builder with TLS enabled from the start.
+    pub fn tls_builder() -> HttpTransportBuilder<
+        HttpsConnector<HttpConnector>,
+        native_tls::Error,
+        DefaultTlsClientBuilder,
+    > {
+        HttpTransportBuilder {
+            client_builder: DefaultTlsClientBuilder,
+            _connect_marker: PhantomData,
+            _error_marker: PhantomData,
+            handle: None,
+        }
+    }
+
+    fn new(request_tx: CoreSender) -> Self {
+        HttpTransport {
+            request_tx,
+            id: Arc::new(AtomicUsize::new(1)),
+        }
+    }
+
+    /// Returns a handle to this `HttpTransport` valid for a given URI.
+    ///
+    /// Used to create instances implementing `jsonrpc_client_core::Transport` for use with RPC
+    /// clients.
     pub fn handle(&self, uri: &str) -> Result<HttpHandle> {
         let uri = Uri::from_str(uri)?;
         Ok(HttpHandle {
@@ -169,8 +247,8 @@ impl HttpCore {
     }
 }
 
-/// A handle to a `HttpCore`. This implements `jsonrpc_client_core::Transport` and can be used as
-/// the transport object for an RPC client generated by `jsonrpc_client_core`.
+/// A handle to a `HttpTransport`. This implements `jsonrpc_client_core::Transport` and can be used
+/// as the transport object for an RPC client generated by `jsonrpc_client_core`.
 #[derive(Clone)]
 pub struct HttpHandle {
     request_tx: CoreSender,
