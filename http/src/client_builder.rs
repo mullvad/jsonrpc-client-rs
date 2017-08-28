@@ -4,9 +4,15 @@ use std::io;
 use tokio_core::reactor::Handle;
 
 /// Trait for types able to produce Hyper `Client`s for use in `HttpTransport`.
-pub trait ClientBuilder<C: Connect, E: ::std::error::Error>: Send + 'static {
+pub trait ClientBuilder: Send + 'static {
+    /// The connector type inside the `Client` created by this builder.
+    type Connect: Connect;
+
+    /// The error emitted by this builder in case creating the `Client` failed.
+    type Error: ::std::error::Error + Send;
+
     /// Tries to create a Hyper `Client` based on the given Tokio `Handle`.
-    fn build(&self, handle: &Handle) -> Result<Client<C, Body>, E>;
+    fn build(&self, handle: &Handle) -> Result<Client<Self::Connect, Body>, Self::Error>;
 }
 
 /// Default `Client` builder that defaults to creating a standard `Client` with just
@@ -14,19 +20,25 @@ pub trait ClientBuilder<C: Connect, E: ::std::error::Error>: Send + 'static {
 #[derive(Default)]
 pub struct DefaultClientBuilder;
 
-impl ClientBuilder<HttpConnector, io::Error> for DefaultClientBuilder {
+impl ClientBuilder for DefaultClientBuilder {
+    type Connect = HttpConnector;
+    type Error = io::Error;
+
     fn build(&self, handle: &Handle) -> Result<Client<HttpConnector, Body>, io::Error> {
         Ok(Client::new(handle))
     }
 }
 
-impl<C, E, F> ClientBuilder<C, E> for F
+impl<C, E, F> ClientBuilder for F
 where
     C: Connect,
-    E: ::std::error::Error,
+    E: ::std::error::Error + Send,
     F: Fn(&Handle) -> Result<Client<C, Body>, E>,
     F: Send + 'static,
 {
+    type Connect = C;
+    type Error = E;
+
     fn build(&self, handle: &Handle) -> Result<Client<C, Body>, E> {
         (self)(handle)
     }
@@ -44,7 +56,10 @@ mod tls {
     #[derive(Default)]
     pub struct DefaultTlsClientBuilder;
 
-    impl ClientBuilder<HttpsConnector<HttpConnector>, Error> for DefaultTlsClientBuilder {
+    impl ClientBuilder for DefaultTlsClientBuilder {
+        type Connect = HttpsConnector<HttpConnector>;
+        type Error = Error;
+
         fn build(
             &self,
             handle: &Handle,

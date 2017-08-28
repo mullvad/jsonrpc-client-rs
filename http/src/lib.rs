@@ -76,15 +76,9 @@ use futures::{future, BoxFuture, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 
 use hyper::{Client, Request, StatusCode, Uri};
-use hyper::client::HttpConnector;
-
-#[cfg(feature = "tls")]
-use hyper_tls::HttpsConnector;
 
 use jsonrpc_client_core::Transport;
 
-use std::io;
-use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -121,36 +115,16 @@ error_chain! {
 
 /// Builder struct for `HttpTransport`. Created from static metods on `HttpTransport`.
 #[derive(Debug)]
-pub struct HttpTransportBuilder<C, E, CB>
-where
-    C: hyper::client::Connect,
-    E: ::std::error::Error + Send + 'static,
-    CB: ClientBuilder<C, E>,
-{
-    client_builder: CB,
-    _connect_marker: PhantomData<C>,
-    _error_marker: PhantomData<E>,
-
+pub struct HttpTransportBuilder<C: ClientBuilder> {
+    client_builder: C,
     handle: Option<Handle>,
 }
 
-impl<C, E, CB> HttpTransportBuilder<C, E, CB>
-where
-    C: hyper::client::Connect,
-    E: ::std::error::Error + Send + 'static,
-    CB: ClientBuilder<C, E>,
-{
+impl<C: ClientBuilder> HttpTransportBuilder<C> {
     /// Change how the Hyper `Client` is created.
-    pub fn client<C2, E2, CB2>(self, builder: CB2) -> HttpTransportBuilder<C2, E2, CB2>
-    where
-        C2: hyper::client::Connect,
-        E2: ::std::error::Error + Send + 'static,
-        CB2: ClientBuilder<C2, E2>,
-    {
+    pub fn client<C2: ClientBuilder>(self, builder: C2) -> HttpTransportBuilder<C2> {
         HttpTransportBuilder {
             client_builder: builder,
-            _connect_marker: PhantomData,
-            _error_marker: PhantomData,
             handle: self.handle,
         }
     }
@@ -204,7 +178,7 @@ where
 
     /// Creates all the components needed to run the `HttpTransport` in standalone mode.
     fn create_standalone_core(
-        client_builder: CB,
+        client_builder: C,
     ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
         let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
         let client = client_builder
@@ -219,7 +193,7 @@ where
     /// requests.
     fn create_request_processing_future(
         request_rx: CoreReceiver,
-        client: Client<C, hyper::Body>,
+        client: Client<C::Connect, hyper::Body>,
     ) -> Box<Future<Item = (), Error = ()>> {
         let f = request_rx.for_each(move |(request, response_tx)| {
             client
@@ -262,26 +236,18 @@ pub struct HttpTransport {
 impl HttpTransport {
     /// Returns the default builder that can be configured and then used to create a
     /// `HttpTransport` instance.
-    pub fn builder() -> HttpTransportBuilder<HttpConnector, io::Error, DefaultClientBuilder> {
+    pub fn builder() -> HttpTransportBuilder<DefaultClientBuilder> {
         HttpTransportBuilder {
             client_builder: DefaultClientBuilder,
-            _connect_marker: PhantomData,
-            _error_marker: PhantomData,
             handle: None,
         }
     }
 
     #[cfg(feature = "tls")]
     /// Returns a builder with TLS enabled from the start.
-    pub fn tls_builder() -> HttpTransportBuilder<
-        HttpsConnector<HttpConnector>,
-        native_tls::Error,
-        DefaultTlsClientBuilder,
-    > {
+    pub fn tls_builder() -> HttpTransportBuilder<DefaultTlsClientBuilder> {
         HttpTransportBuilder {
             client_builder: DefaultTlsClientBuilder,
-            _connect_marker: PhantomData,
-            _error_marker: PhantomData,
             handle: None,
         }
     }
@@ -362,6 +328,8 @@ impl Transport<Error> for HttpHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hyper::client::HttpConnector;
+    use std::io;
 
     #[test]
     fn builder_accept_handle() {
