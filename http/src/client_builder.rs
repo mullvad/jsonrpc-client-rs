@@ -3,7 +3,7 @@ use hyper::client::{Client, Connect, HttpConnector};
 use std::io;
 use tokio_core::reactor::Handle;
 
-/// Trait for types able to produce Hyper `Client`s for use in `HttpCore`.
+/// Trait for types able to produce Hyper `Client`s for use in `HttpTransport`.
 pub trait ClientBuilder<C: Connect, E: ::std::error::Error>: Send + 'static {
     /// Tries to create a Hyper `Client` based on the given Tokio `Handle`.
     fn build(&self, handle: &Handle) -> Result<Client<C, Body>, E>;
