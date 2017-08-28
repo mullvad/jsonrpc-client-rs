@@ -166,32 +166,40 @@ where
     }
 
     /// Build a `HttpTransport` with the current builder configuration.
-    pub fn build(self) -> Result<HttpTransport> {
-        if let Some(handle) = self.handle {
-            let client = self.client_builder
-                .build(&handle)
-                .chain_err(|| ErrorKind::ClientBuilderError)?;
-            let (request_tx, request_rx) = mpsc::unbounded();
-            handle.spawn(Self::create_request_processing_future(request_rx, client));
-            Ok(HttpTransport::new(request_tx))
+    pub fn build(mut self) -> Result<HttpTransport> {
+        if let Some(handle) = self.handle.take() {
+            self.new_shared(handle)
         } else {
-            let (tx, rx) = ::std::sync::mpsc::channel();
-            let client_builder = self.client_builder;
-            thread::spawn(move || {
-                match Self::create_standalone_core(client_builder) {
-                    Err(e) => {
-                        tx.send(Err(e)).unwrap();
-                    }
-                    Ok((mut core, request_tx, future)) => {
-                        tx.send(Ok(HttpTransport::new(request_tx))).unwrap();
-                        let _ = core.run(future);
-                    }
-                }
-                debug!("Standalone HttpTransport thread exiting");
-            });
-
-            rx.recv().unwrap()
+            self.new_standalone()
         }
+    }
+
+    fn new_shared(&self, handle: Handle) -> Result<HttpTransport> {
+        let client = self.client_builder
+            .build(&handle)
+            .chain_err(|| ErrorKind::ClientBuilderError)?;
+        let (request_tx, request_rx) = mpsc::unbounded();
+        handle.spawn(Self::create_request_processing_future(request_rx, client));
+        Ok(HttpTransport::new(request_tx))
+    }
+
+    fn new_standalone(self) -> Result<HttpTransport> {
+        let (tx, rx) = ::std::sync::mpsc::channel();
+        let client_builder = self.client_builder;
+        thread::spawn(move || {
+            match Self::create_standalone_core(client_builder) {
+                Err(e) => {
+                    tx.send(Err(e)).unwrap();
+                }
+                Ok((mut core, request_tx, future)) => {
+                    tx.send(Ok(HttpTransport::new(request_tx))).unwrap();
+                    let _ = core.run(future);
+                }
+            }
+            debug!("Standalone HttpTransport thread exiting");
+        });
+
+        rx.recv().unwrap()
     }
 
     /// Creates all the components needed to run the `HttpTransport` in standalone mode.
