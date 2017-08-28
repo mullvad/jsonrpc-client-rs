@@ -3,6 +3,7 @@ name = "jsonrpc-client-http"
 version = "0.1.0"
 authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A transport implementation for jsonrpc-client-core based on Hyper and futures"
+readme = "README.md"
 keywords = ["jsonrpc", "rpc", "client", "http", "https"]
 categories = ["network-programming", "web-programming", "web-programming::http-client"]
 repository = "https://github.com/mullvad/jsonrpc-client"
