@@ -5,17 +5,17 @@ use tokio_core::reactor::Handle;
 
 /// Trait for types able to produce Hyper `Client`s for use in `HttpTransport`.
 pub trait ClientCreator: Send + 'static {
-    /// The connector type inside the `Client` created by this builder.
+    /// The connector type inside the `Client` created by this type.
     type Connect: Connect;
 
-    /// The error emitted by this builder in case creating the `Client` failed.
+    /// The error emitted by this type in case creating the `Client` failed.
     type Error: ::std::error::Error + Send;
 
     /// Tries to create a Hyper `Client` based on the given Tokio `Handle`.
-    fn build(&self, handle: &Handle) -> Result<Client<Self::Connect, Body>, Self::Error>;
+    fn create(&self, handle: &Handle) -> Result<Client<Self::Connect, Body>, Self::Error>;
 }
 
-/// Default `Client` builder that defaults to creating a standard `Client` with just
+/// Default `Client` creator that defaults to creating a standard `Client` with just
 /// `hyper::Client::new(handle)`.
 #[derive(Debug, Default)]
 pub struct DefaultClient;
@@ -24,7 +24,7 @@ impl ClientCreator for DefaultClient {
     type Connect = HttpConnector;
     type Error = io::Error;
 
-    fn build(&self, handle: &Handle) -> Result<Client<HttpConnector, Body>, io::Error> {
+    fn create(&self, handle: &Handle) -> Result<Client<HttpConnector, Body>, io::Error> {
         Ok(Client::new(handle))
     }
 }
@@ -39,7 +39,7 @@ where
     type Connect = C;
     type Error = E;
 
-    fn build(&self, handle: &Handle) -> Result<Client<C, Body>, E> {
+    fn create(&self, handle: &Handle) -> Result<Client<C, Body>, E> {
         (self)(handle)
     }
 }
@@ -55,7 +55,7 @@ mod tls {
     /// Since DNS is resolved via blocking syscall they must be run on separate threads.
     static DNS_THREADS: usize = 2;
 
-    /// Default `Client` builder for TLS enabled clients. Creates a Hyper `Client` based on
+    /// Default `Client` creator for TLS enabled clients. Creates a Hyper `Client` based on
     /// `hyper_tls::HttpsConnector`.
     #[derive(Debug, Default)]
     pub struct DefaultTlsClient;
@@ -64,7 +64,7 @@ mod tls {
         type Connect = HttpsConnector<HttpConnector>;
         type Error = Error;
 
-        fn build(
+        fn create(
             &self,
             handle: &Handle,
         ) -> Result<Client<HttpsConnector<HttpConnector>, Body>, Error> {
