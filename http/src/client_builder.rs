@@ -51,6 +51,10 @@ mod tls {
     use hyper_tls::HttpsConnector;
     use native_tls::Error;
 
+    /// Number of threads in the thread pool doing DNS resolutions.
+    /// Since DNS is resolved via blocking syscall they must be run on separate threads.
+    static DNS_THREADS: usize = 2;
+
     /// Default `Client` builder for TLS enabled clients. Creates a Hyper `Client` based on
     /// `hyper_tls::HttpsConnector`.
     #[derive(Default)]
@@ -64,7 +68,7 @@ mod tls {
             &self,
             handle: &Handle,
         ) -> Result<Client<HttpsConnector<HttpConnector>, Body>, Error> {
-            let connector = HttpsConnector::new(2, handle)?;
+            let connector = HttpsConnector::new(DNS_THREADS, handle)?;
             let client = Client::configure().connector(connector).build(handle);
             Ok(client)
         }
