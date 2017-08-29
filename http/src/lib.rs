@@ -86,12 +86,12 @@ use std::thread;
 
 use tokio_core::reactor::{Core, Handle};
 
-mod client_builder;
-pub use client_builder::*;
+mod client_creator;
+pub use client_creator::*;
 
 error_chain! {
     errors {
-        /// When there was an error creating the Hyper `Client` from the given builder.
+        /// When there was an error creating the Hyper `Client` from the given creator.
         ClientCreatorError {
             description("Failed to create the Hyper Client")
         }
@@ -113,10 +113,10 @@ error_chain! {
 }
 
 
-/// Builder struct for `HttpTransport`. Created from static metods on `HttpTransport`.
+/// Builder struct for `HttpTransport`. Created from static methods on `HttpTransport`.
 #[derive(Debug)]
 pub struct HttpTransportBuilder<C: ClientCreator> {
-    client_builder: C,
+    client_creator: C,
     handle: Option<Handle>,
 }
 
@@ -124,7 +124,7 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// Change how the Hyper `Client` is created.
     pub fn client<C2: ClientCreator>(self, builder: C2) -> HttpTransportBuilder<C2> {
         HttpTransportBuilder {
-            client_builder: builder,
+            client_creator: builder,
             handle: self.handle,
         }
     }
@@ -149,8 +149,8 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     }
 
     fn new_shared(&self, handle: Handle) -> Result<HttpTransport> {
-        let client = self.client_builder
-            .build(&handle)
+        let client = self.client_creator
+            .create(&handle)
             .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
         handle.spawn(Self::create_request_processing_future(request_rx, client));
@@ -159,9 +159,9 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
 
     fn new_standalone(self) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
-        let client_builder = self.client_builder;
+        let client_creator = self.client_creator;
         thread::spawn(move || {
-            match Self::create_standalone_core(client_builder) {
+            match Self::create_standalone_core(client_creator) {
                 Err(e) => {
                     tx.send(Err(e)).unwrap();
                 }
@@ -178,11 +178,11 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
 
     /// Creates all the components needed to run the `HttpTransport` in standalone mode.
     fn create_standalone_core(
-        client_builder: C,
+        client_creator: C,
     ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
         let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
-        let client = client_builder
-            .build(&core.handle())
+        let client = client_creator
+            .create(&core.handle())
             .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
         let future = Self::create_request_processing_future(request_rx, client);
@@ -238,7 +238,7 @@ impl HttpTransport {
     /// `HttpTransport` instance.
     pub fn builder() -> HttpTransportBuilder<DefaultClient> {
         HttpTransportBuilder {
-            client_builder: DefaultClient,
+            client_creator: DefaultClient,
             handle: None,
         }
     }
@@ -247,7 +247,7 @@ impl HttpTransport {
     /// Returns a builder with TLS enabled from the start.
     pub fn tls_builder() -> HttpTransportBuilder<DefaultTlsClient> {
         HttpTransportBuilder {
-            client_builder: DefaultTlsClient,
+            client_creator: DefaultTlsClient,
             handle: None,
         }
     }
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_closure_client_builder() {
+    fn builder_closure_client_creator() {
         HttpTransport::builder()
             .client(|handle: &Handle| {
                 Ok(Client::new(handle)) as Result<Client<HttpConnector, hyper::Body>>
@@ -356,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_client_builder_fails() {
+    fn builder_client_creator_fails() {
         let error = HttpTransport::builder()
             .client(|_: &Handle| {
                 Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
