@@ -21,7 +21,7 @@
 //! are transport agnostic. They can use any type implementing the `Transport` trait.
 //!
 //! The main (and so far only) transport implementation is the Hyper based HTTP implementation
-//! in the `jsonrpc-client-http` crate.
+//! in the [`jsonrpc-client-http`](../jsonrpc_client_http/index.html) crate.
 //!
 //! # Example
 //!
@@ -37,7 +37,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::builder().build().unwrap();
+//!     let transport = HttpTransport::new().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
