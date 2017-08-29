@@ -92,7 +92,7 @@ pub use client_builder::*;
 error_chain! {
     errors {
         /// When there was an error creating the Hyper `Client` from the given builder.
-        ClientBuilderError {
+        ClientCreatorError {
             description("Failed to create the Hyper Client")
         }
         /// When the http status code of the response is not 200 OK
@@ -115,14 +115,14 @@ error_chain! {
 
 /// Builder struct for `HttpTransport`. Created from static metods on `HttpTransport`.
 #[derive(Debug)]
-pub struct HttpTransportBuilder<C: ClientBuilder> {
+pub struct HttpTransportBuilder<C: ClientCreator> {
     client_builder: C,
     handle: Option<Handle>,
 }
 
-impl<C: ClientBuilder> HttpTransportBuilder<C> {
+impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// Change how the Hyper `Client` is created.
-    pub fn client<C2: ClientBuilder>(self, builder: C2) -> HttpTransportBuilder<C2> {
+    pub fn client<C2: ClientCreator>(self, builder: C2) -> HttpTransportBuilder<C2> {
         HttpTransportBuilder {
             client_builder: builder,
             handle: self.handle,
@@ -151,7 +151,7 @@ impl<C: ClientBuilder> HttpTransportBuilder<C> {
     fn new_shared(&self, handle: Handle) -> Result<HttpTransport> {
         let client = self.client_builder
             .build(&handle)
-            .chain_err(|| ErrorKind::ClientBuilderError)?;
+            .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
         handle.spawn(Self::create_request_processing_future(request_rx, client));
         Ok(HttpTransport::new(request_tx))
@@ -183,7 +183,7 @@ impl<C: ClientBuilder> HttpTransportBuilder<C> {
         let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
         let client = client_builder
             .build(&core.handle())
-            .chain_err(|| ErrorKind::ClientBuilderError)?;
+            .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
         let future = Self::create_request_processing_future(request_rx, client);
         Ok((core, request_tx, future))
@@ -236,18 +236,18 @@ pub struct HttpTransport {
 impl HttpTransport {
     /// Returns the default builder that can be configured and then used to create a
     /// `HttpTransport` instance.
-    pub fn builder() -> HttpTransportBuilder<DefaultClientBuilder> {
+    pub fn builder() -> HttpTransportBuilder<DefaultClient> {
         HttpTransportBuilder {
-            client_builder: DefaultClientBuilder,
+            client_builder: DefaultClient,
             handle: None,
         }
     }
 
     #[cfg(feature = "tls")]
     /// Returns a builder with TLS enabled from the start.
-    pub fn tls_builder() -> HttpTransportBuilder<DefaultTlsClientBuilder> {
+    pub fn tls_builder() -> HttpTransportBuilder<DefaultTlsClient> {
         HttpTransportBuilder {
-            client_builder: DefaultTlsClientBuilder,
+            client_builder: DefaultTlsClient,
             handle: None,
         }
     }
@@ -365,7 +365,7 @@ mod tests {
             .build()
             .unwrap_err();
         match error.kind() {
-            &ErrorKind::ClientBuilderError => (),
+            &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
         }
     }

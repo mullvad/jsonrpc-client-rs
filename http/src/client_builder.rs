@@ -4,7 +4,7 @@ use std::io;
 use tokio_core::reactor::Handle;
 
 /// Trait for types able to produce Hyper `Client`s for use in `HttpTransport`.
-pub trait ClientBuilder: Send + 'static {
+pub trait ClientCreator: Send + 'static {
     /// The connector type inside the `Client` created by this builder.
     type Connect: Connect;
 
@@ -17,10 +17,10 @@ pub trait ClientBuilder: Send + 'static {
 
 /// Default `Client` builder that defaults to creating a standard `Client` with just
 /// `hyper::Client::new(handle)`.
-#[derive(Default)]
-pub struct DefaultClientBuilder;
+#[derive(Debug, Default)]
+pub struct DefaultClient;
 
-impl ClientBuilder for DefaultClientBuilder {
+impl ClientCreator for DefaultClient {
     type Connect = HttpConnector;
     type Error = io::Error;
 
@@ -29,7 +29,7 @@ impl ClientBuilder for DefaultClientBuilder {
     }
 }
 
-impl<C, E, F> ClientBuilder for F
+impl<C, E, F> ClientCreator for F
 where
     C: Connect,
     E: ::std::error::Error + Send,
@@ -57,10 +57,10 @@ mod tls {
 
     /// Default `Client` builder for TLS enabled clients. Creates a Hyper `Client` based on
     /// `hyper_tls::HttpsConnector`.
-    #[derive(Default)]
-    pub struct DefaultTlsClientBuilder;
+    #[derive(Debug, Default)]
+    pub struct DefaultTlsClient;
 
-    impl ClientBuilder for DefaultTlsClientBuilder {
+    impl ClientCreator for DefaultTlsClient {
         type Connect = HttpsConnector<HttpConnector>;
         type Error = Error;
 
