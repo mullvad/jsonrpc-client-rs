@@ -44,7 +44,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::tls_builder().build().unwrap();
+//!     let transport = HttpTransport::new().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
@@ -56,7 +56,7 @@
 //! }
 //! ```
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 
 #[macro_use]
 extern crate error_chain;
@@ -113,114 +113,6 @@ error_chain! {
 }
 
 
-/// Builder struct for `HttpTransport`. Created from static methods on `HttpTransport`.
-#[derive(Debug)]
-pub struct HttpTransportBuilder<C: ClientCreator> {
-    client_creator: C,
-    handle: Option<Handle>,
-}
-
-impl<C: ClientCreator> HttpTransportBuilder<C> {
-    /// Change how the Hyper `Client` is created.
-    pub fn client<C2: ClientCreator>(self, builder: C2) -> HttpTransportBuilder<C2> {
-        HttpTransportBuilder {
-            client_creator: builder,
-            handle: self.handle,
-        }
-    }
-
-    /// Sets which Tokio `Handle`, and thus which `Core` to run the resulting `HttpTransport` on.
-    ///
-    /// If this method is not called, the default is to spawn a standalone Tokio `Core` in a
-    /// separate thread. The thread and the event loop will run for as long as the
-    /// returned `HttpTransport`, or any `HttpHandle` to it, exists.
-    pub fn handle(mut self, handle: Handle) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-
-    /// Build a `HttpTransport` with the current builder configuration.
-    pub fn build(mut self) -> Result<HttpTransport> {
-        if let Some(handle) = self.handle.take() {
-            self.new_shared(handle)
-        } else {
-            self.new_standalone()
-        }
-    }
-
-    fn new_shared(&self, handle: Handle) -> Result<HttpTransport> {
-        let client = self.client_creator
-            .create(&handle)
-            .chain_err(|| ErrorKind::ClientCreatorError)?;
-        let (request_tx, request_rx) = mpsc::unbounded();
-        handle.spawn(Self::create_request_processing_future(request_rx, client));
-        Ok(HttpTransport::new(request_tx))
-    }
-
-    fn new_standalone(self) -> Result<HttpTransport> {
-        let (tx, rx) = ::std::sync::mpsc::channel();
-        let client_creator = self.client_creator;
-        thread::spawn(move || {
-            match Self::create_standalone_core(client_creator) {
-                Err(e) => {
-                    tx.send(Err(e)).unwrap();
-                }
-                Ok((mut core, request_tx, future)) => {
-                    tx.send(Ok(HttpTransport::new(request_tx))).unwrap();
-                    let _ = core.run(future);
-                }
-            }
-            debug!("Standalone HttpTransport thread exiting");
-        });
-
-        rx.recv().unwrap()
-    }
-
-    /// Creates all the components needed to run the `HttpTransport` in standalone mode.
-    fn create_standalone_core(
-        client_creator: C,
-    ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
-        let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
-        let client = client_creator
-            .create(&core.handle())
-            .chain_err(|| ErrorKind::ClientCreatorError)?;
-        let (request_tx, request_rx) = mpsc::unbounded();
-        let future = Self::create_request_processing_future(request_rx, client);
-        Ok((core, request_tx, future))
-    }
-
-    /// Creates the `Future` that, when running on a Tokio Core, processes incoming RPC call
-    /// requests.
-    fn create_request_processing_future(
-        request_rx: CoreReceiver,
-        client: Client<C::Connect, hyper::Body>,
-    ) -> Box<Future<Item = (), Error = ()>> {
-        let f = request_rx.for_each(move |(request, response_tx)| {
-            client
-                .request(request)
-                .from_err()
-                .and_then(|response: hyper::Response| {
-                    if response.status() == hyper::StatusCode::Ok {
-                        future::ok(response)
-                    } else {
-                        future::err(ErrorKind::HttpError(response.status()).into())
-                    }
-                })
-                .and_then(|response: hyper::Response| {
-                    response.body().concat2().from_err()
-                })
-                .map(|response_chunk| response_chunk.to_vec())
-                .then(move |response_result| {
-                    response_tx.send(response_result).map_err(|_| {
-                        warn!("Unable to send response back to caller");
-                        ()
-                    })
-                })
-        });
-        Box::new(f) as Box<Future<Item = (), Error = ()>>
-    }
-}
-
 type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 
@@ -234,25 +126,69 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    /// Returns the default builder that can be configured and then used to create a
-    /// `HttpTransport` instance.
-    pub fn builder() -> HttpTransportBuilder<DefaultClient> {
-        HttpTransportBuilder {
-            client_creator: DefaultClient,
-            handle: None,
-        }
+    #[cfg(not(feature = "tls"))]
+    pub fn new() -> Result<HttpTransport> {
+        Self::standalone_internal(DefaultClient)
     }
 
     #[cfg(feature = "tls")]
-    /// Returns a builder with TLS enabled from the start.
-    pub fn tls_builder() -> HttpTransportBuilder<DefaultTlsClient> {
-        HttpTransportBuilder {
-            client_creator: DefaultTlsClient,
-            handle: None,
-        }
+    pub fn new() -> Result<HttpTransport> {
+        Self::standalone_internal(DefaultTlsClient)
     }
 
-    fn new(request_tx: CoreSender) -> Self {
+    #[cfg(not(feature = "tls"))]
+    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
+        Self::shared_internal(DefaultClient, handle)
+    }
+
+    #[cfg(feature = "tls")]
+    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
+        Self::shared_internal(DefaultTlsClient, handle)
+    }
+
+    pub fn with_client<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
+        Self::standalone_internal(client_creator)
+    }
+
+    pub fn with_client_shared<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
+    where
+        C: ClientCreator,
+    {
+        Self::shared_internal(client_creator, handle)
+    }
+
+    fn standalone_internal<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
+        let (tx, rx) = ::std::sync::mpsc::channel();
+        thread::spawn(move || {
+            match create_standalone_core(client_creator) {
+                Err(e) => {
+                    tx.send(Err(e)).unwrap();
+                }
+                Ok((mut core, request_tx, future)) => {
+                    tx.send(Ok(HttpTransport::new_internal(request_tx)))
+                        .unwrap();
+                    let _ = core.run(future);
+                }
+            }
+            debug!("Standalone HttpTransport thread exiting");
+        });
+
+        rx.recv().unwrap()
+    }
+
+    fn shared_internal<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
+    where
+        C: ClientCreator,
+    {
+        let client = client_creator
+            .create(handle)
+            .chain_err(|| ErrorKind::ClientCreatorError)?;
+        let (request_tx, request_rx) = mpsc::unbounded();
+        handle.spawn(create_request_processing_future(request_rx, client));
+        Ok(HttpTransport::new_internal(request_tx))
+    }
+
+    fn new_internal(request_tx: CoreSender) -> HttpTransport {
         HttpTransport {
             request_tx,
             id: Arc::new(AtomicUsize::new(1)),
@@ -271,6 +207,50 @@ impl HttpTransport {
             id: self.id.clone(),
         })
     }
+}
+
+/// Creates all the components needed to run the `HttpTransport` in standalone mode.
+fn create_standalone_core<C: ClientCreator>(
+    client_creator: C,
+) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
+    let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
+    let client = client_creator
+        .create(&core.handle())
+        .chain_err(|| ErrorKind::ClientCreatorError)?;
+    let (request_tx, request_rx) = mpsc::unbounded();
+    let future = create_request_processing_future(request_rx, client);
+    Ok((core, request_tx, future))
+}
+
+/// Creates the `Future` that, when running on a Tokio Core, processes incoming RPC call
+/// requests.
+fn create_request_processing_future<CC: hyper::client::Connect>(
+    request_rx: CoreReceiver,
+    client: Client<CC, hyper::Body>,
+) -> Box<Future<Item = (), Error = ()>> {
+    let f = request_rx.for_each(move |(request, response_tx)| {
+        client
+            .request(request)
+            .from_err()
+            .and_then(|response: hyper::Response| {
+                if response.status() == hyper::StatusCode::Ok {
+                    future::ok(response)
+                } else {
+                    future::err(ErrorKind::HttpError(response.status()).into())
+                }
+            })
+            .and_then(|response: hyper::Response| {
+                response.body().concat2().from_err()
+            })
+            .map(|response_chunk| response_chunk.to_vec())
+            .then(move |response_result| {
+                response_tx.send(response_result).map_err(|_| {
+                    warn!("Unable to send response back to caller");
+                    ()
+                })
+            })
+    });
+    Box::new(f) as Box<Future<Item = (), Error = ()>>
 }
 
 /// A handle to a `HttpTransport`. This implements `jsonrpc_client_core::Transport` and can be used
@@ -332,38 +312,29 @@ mod tests {
     use std::io;
 
     #[test]
-    fn builder_accept_handle() {
+    fn new_shared() {
         let core = Core::new().unwrap();
-        HttpTransport::builder()
-            .handle(core.handle())
-            .build()
-            .unwrap();
+        HttpTransport::shared(&core.handle()).unwrap();
     }
 
     #[test]
-    fn builder_no_handle() {
-        HttpTransport::builder().build().unwrap();
+    fn new_standalone() {
+        HttpTransport::new().unwrap();
     }
 
     #[test]
-    fn builder_closure_client_creator() {
-        HttpTransport::builder()
-            .client(|handle: &Handle| {
-                Ok(Client::new(handle)) as Result<Client<HttpConnector, hyper::Body>>
-            })
-            .build()
-            .unwrap();
+    fn new_custom_client() {
+        HttpTransport::with_client(|handle: &Handle| {
+            Ok(Client::new(handle)) as Result<Client<HttpConnector, hyper::Body>>
+        }).unwrap();
     }
 
     #[test]
-    fn builder_client_creator_fails() {
-        let error = HttpTransport::builder()
-            .client(|_: &Handle| {
-                Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
-                    ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-            })
-            .build()
-            .unwrap_err();
+    fn failing_client_creator() {
+        let error = HttpTransport::with_client(|_: &Handle| {
+            Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
+                ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+        }).unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
