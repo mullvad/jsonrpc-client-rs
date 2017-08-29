@@ -44,7 +44,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::tls_builder().build().unwrap();
+//!     let transport = HttpTransport::new().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
@@ -116,11 +116,6 @@ error_chain! {
 type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 
-pub enum CoreOption {
-    Standalone,
-    Shared(Handle),
-}
-
 /// The main struct of the HTTP transport implementation for `jsonrpc-client-core`.
 ///
 /// Created with the `HttpTransportBuilder` builder.
@@ -131,38 +126,38 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    pub fn new<C>(client_creator: C, core: CoreOption) -> Result<HttpTransport>
-    where C: ClientCreator
-    {
-        match core {
-            CoreOption::Standalone => Self::new_standalone(client_creator),
-            CoreOption::Shared(handle) => Self::new_shared(client_creator, handle)
-        }
-    }
-
-    pub fn default(core: CoreOption) -> Result<HttpTransport> {
-        Self::new(DefaultClient, core)
+    #[cfg(not(feature = "tls"))]
+    pub fn new() -> Result<HttpTransport> {
+        Self::standalone_internal(DefaultClient)
     }
 
     #[cfg(feature = "tls")]
-    pub fn with_tls(core: CoreOption) -> Result<HttpTransport> {
-        Self::new(DefaultTlsClient, core)
+    pub fn new() -> Result<HttpTransport> {
+        Self::standalone_internal(DefaultTlsClient)
     }
 
-    fn new_shared<C>(client_creator: C, handle: Handle) -> Result<HttpTransport>
-    where C: ClientCreator
-    {
-        let client = client_creator
-            .create(&handle)
-            .chain_err(|| ErrorKind::ClientCreatorError)?;
-        let (request_tx, request_rx) = mpsc::unbounded();
-        handle.spawn(create_request_processing_future(request_rx, client));
-        Ok(HttpTransport::new_internal(request_tx))
+    #[cfg(not(feature = "tls"))]
+    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
+        Self::shared_internal(DefaultClient, handle)
     }
 
-    fn new_standalone<C>(client_creator: C) -> Result<HttpTransport>
-    where C: ClientCreator
+    #[cfg(feature = "tls")]
+    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
+        Self::shared_internal(DefaultTlsClient, handle)
+    }
+
+    pub fn with_client<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
+        Self::standalone_internal(client_creator)
+    }
+
+    pub fn with_client_shared<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
+    where
+        C: ClientCreator,
     {
+        Self::shared_internal(client_creator, handle)
+    }
+
+    fn standalone_internal<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
         thread::spawn(move || {
             match create_standalone_core(client_creator) {
@@ -170,7 +165,8 @@ impl HttpTransport {
                     tx.send(Err(e)).unwrap();
                 }
                 Ok((mut core, request_tx, future)) => {
-                    tx.send(Ok(HttpTransport::new_internal(request_tx))).unwrap();
+                    tx.send(Ok(HttpTransport::new_internal(request_tx)))
+                        .unwrap();
                     let _ = core.run(future);
                 }
             }
@@ -178,6 +174,18 @@ impl HttpTransport {
         });
 
         rx.recv().unwrap()
+    }
+
+    fn shared_internal<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
+    where
+        C: ClientCreator,
+    {
+        let client = client_creator
+            .create(handle)
+            .chain_err(|| ErrorKind::ClientCreatorError)?;
+        let (request_tx, request_rx) = mpsc::unbounded();
+        handle.spawn(create_request_processing_future(request_rx, client));
+        Ok(HttpTransport::new_internal(request_tx))
     }
 
     fn new_internal(request_tx: CoreSender) -> HttpTransport {
@@ -304,38 +312,29 @@ mod tests {
     use std::io;
 
     #[test]
-    fn builder_accept_handle() {
+    fn new_shared() {
         let core = Core::new().unwrap();
-        HttpTransport::builder()
-            .handle(core.handle())
-            .build()
-            .unwrap();
+        HttpTransport::shared(&core.handle()).unwrap();
     }
 
     #[test]
-    fn builder_no_handle() {
-        HttpTransport::builder().build().unwrap();
+    fn new_standalone() {
+        HttpTransport::new().unwrap();
     }
 
     #[test]
-    fn builder_closure_client_creator() {
-        HttpTransport::builder()
-            .client(|handle: &Handle| {
-                Ok(Client::new(handle)) as Result<Client<HttpConnector, hyper::Body>>
-            })
-            .build()
-            .unwrap();
+    fn new_custom_client() {
+        HttpTransport::with_client(|handle: &Handle| {
+            Ok(Client::new(handle)) as Result<Client<HttpConnector, hyper::Body>>
+        }).unwrap();
     }
 
     #[test]
-    fn builder_client_creator_fails() {
-        let error = HttpTransport::builder()
-            .client(|_: &Handle| {
-                Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
-                    ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-            })
-            .build()
-            .unwrap_err();
+    fn failing_client_creator() {
+        let error = HttpTransport::with_client(|_: &Handle| {
+            Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
+                ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+        }).unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
