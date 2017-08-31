@@ -3,6 +3,7 @@ name = "jsonrpc-client-http"
 version = "0.1.0"
 authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A transport implementation for jsonrpc-client-core based on Hyper and futures"
+readme = "README.md"
 keywords = ["jsonrpc", "rpc", "client", "http", "https"]
 categories = ["network-programming", "web-programming", "web-programming::http-client"]
 repository = "https://github.com/mullvad/jsonrpc-client"
@@ -12,10 +13,15 @@ license = "MIT/Apache-2.0"
 error-chain = "0.10"
 futures = "0.1"
 hyper = "0.11"
-hyper-tls = "0.1"
+hyper-tls = { version = "0.1", optional = true }
+native-tls = { version = "0.1", optional = true }
 jsonrpc-client-core = { path = "../core" }
 log = "0.3"
 tokio-core = "0.1"
+
+[features]
+default = ["tls"]
+tls = ["hyper-tls", "native-tls"]
 
 [dev-dependencies]
 env_logger = "*"

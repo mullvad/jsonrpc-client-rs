@@ -14,6 +14,7 @@ jsonrpc_client!(
         /// lots of side effects on the server where it executes.
         pub fn nullary(&mut self) -> RpcRequest<()>;
 
+        /// Send a string to the server and it will presumably echo it back.
         pub fn echo(&mut self, input: &str) -> RpcRequest<String>;
 
         /// Example RPC method named "concat" that takes a `String` and an unsigned integer and

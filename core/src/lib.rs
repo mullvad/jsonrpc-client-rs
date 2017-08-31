@@ -21,7 +21,7 @@
 //! are transport agnostic. They can use any type implementing the `Transport` trait.
 //!
 //! The main (and so far only) transport implementation is the Hyper based HTTP implementation
-//! in the `jsonrpc-client-http` crate.
+//! in the [`jsonrpc-client-http`](../jsonrpc_client_http/index.html) crate.
 //!
 //! # Example
 //!
@@ -29,7 +29,7 @@
 //! #[macro_use] extern crate jsonrpc_client_core;
 //! extern crate jsonrpc_client_http;
 //!
-//! use jsonrpc_client_http::HttpCore;
+//! use jsonrpc_client_http::HttpTransport;
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number.
@@ -37,7 +37,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpCore::standalone().unwrap();
+//!     let transport = HttpTransport::new().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
@@ -50,6 +50,7 @@
 //! ```
 //!
 
+#![deny(missing_docs)]
 
 #[macro_use]
 extern crate error_chain;
@@ -89,6 +90,7 @@ error_chain! {
             description("Unable to deserialize the response into the desired type")
             display("Unable to deserialize the response: {}", msg)
         }
+        /// The request was replied to, but with a JSON-RPC 2.0 error.
         JsonRpcError(error: jsonrpc_core::types::error::Error) {
             description("Method call returned JSON-RPC 2.0 error")
             display("JSON-RPC 2.0 Error: {} ({})", error.code.description(), error.message)
