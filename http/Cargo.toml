@@ -1,6 +1,6 @@
 [package]
 name = "jsonrpc-client-http"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A transport implementation for jsonrpc-client-core based on Hyper and futures"
 readme = "README.md"
@@ -15,7 +15,7 @@ futures = "0.1.15"
 hyper = "0.11"
 hyper-tls = { version = "0.1", optional = true }
 native-tls = { version = "0.1", optional = true }
-jsonrpc-client-core = { path = "../core" }
+jsonrpc-client-core = "0.2"
 log = "0.3"
 tokio-core = "0.1"
 
