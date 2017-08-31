@@ -343,12 +343,10 @@ impl Transport<Error> for HttpHandle {
     fn send(&self, json_data: Vec<u8>) -> BoxFuture<Vec<u8>, Error> {
         let request = self.create_request(json_data.clone());
         let (response_tx, response_rx) = oneshot::channel();
-        let future = future::result(mpsc::UnboundedSender::send(
-            &self.request_tx,
-            (request, response_tx),
-        )).map_err(|e| {
-            Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
-        })
+        let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
+            .map_err(|e| {
+                Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
+            })
             .and_then(move |_| {
                 response_rx.map_err(|e| {
                     Error::with_chain(
