@@ -1,6 +1,6 @@
 [package]
 name = "jsonrpc-client-core"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A crate for generating transport agnostic, auto serializing, strongly typed JSON-RPC 2.0 clients"
 readme = "../README.md"

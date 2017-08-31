@@ -1,6 +1,6 @@
 [package]
 name = "jsonrpc-client-http"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
 description = "A transport implementation for jsonrpc-client-core based on Hyper and futures"
 readme = "README.md"
