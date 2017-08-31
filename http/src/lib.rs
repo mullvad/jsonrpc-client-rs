@@ -335,7 +335,9 @@ impl HttpHandle {
     }
 }
 
-impl Transport<Error> for HttpHandle {
+impl Transport for HttpHandle {
+    type Error = Error;
+
     fn get_next_id(&mut self) -> u64 {
         self.id.fetch_add(1, Ordering::SeqCst) as u64
     }
