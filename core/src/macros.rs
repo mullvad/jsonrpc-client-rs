@@ -19,20 +19,14 @@ macro_rules! jsonrpc_client {
         )*}
     ) => (
         $(#[$struct_doc])*
-        pub struct $struct_name<E, T>
-            where E: ::std::error::Error + Send + 'static, T: $crate::Transport<E>
-        {
+        pub struct $struct_name<T: $crate::Transport> {
             transport: T,
-            _error: ::std::marker::PhantomData<E>,
         }
 
-        impl<E: ::std::error::Error + Send + 'static, T: $crate::Transport<E>> $struct_name<E, T> {
+        impl<T: $crate::Transport> $struct_name<T> {
             /// Creates a new RPC client backed by the given transport implementation.
             pub fn new(transport: T) -> Self {
-                $struct_name {
-                    transport,
-                    _error: ::std::marker::PhantomData,
-                }
+                $struct_name { transport }
             }
 
             $(
