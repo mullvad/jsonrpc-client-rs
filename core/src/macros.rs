@@ -44,8 +44,9 @@ macro_rules! jsonrpc_client {
 }
 
 /// Expands a variable list of parameters into its serializable form. Is needed to make the params
-/// of a nullary method `[]` instead of `()` and thus make sure it serializes to `[]` instead of
-/// `null`.
+/// of a nullary method equal to `[]` instead of `()` and thus make sure it serializes to `[]`
+/// instead of `null`.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! expand_params {
     () => ([] as [(); 0]);
