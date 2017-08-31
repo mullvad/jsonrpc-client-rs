@@ -25,7 +25,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! #[macro_use] extern crate jsonrpc_client_core;
 //! extern crate jsonrpc_client_http;
 //!
