@@ -73,12 +73,12 @@ extern crate hyper_tls;
 #[cfg(feature = "tls")]
 extern crate native_tls;
 
-use futures::{future, BoxFuture, Future, Stream};
+use futures::{future, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 
 use hyper::{Client, Request, StatusCode, Uri};
 
-use jsonrpc_client_core::Transport;
+use jsonrpc_client_core::{BoxFuture, Transport};
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -343,12 +343,10 @@ impl Transport<Error> for HttpHandle {
     fn send(&self, json_data: Vec<u8>) -> BoxFuture<Vec<u8>, Error> {
         let request = self.create_request(json_data.clone());
         let (response_tx, response_rx) = oneshot::channel();
-        future::result(mpsc::UnboundedSender::send(
-            &self.request_tx,
-            (request, response_tx),
-        )).map_err(|e| {
-            Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
-        })
+        let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
+            .map_err(|e| {
+                Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
+            })
             .and_then(move |_| {
                 response_rx.map_err(|e| {
                     Error::with_chain(
@@ -357,8 +355,8 @@ impl Transport<Error> for HttpHandle {
                     )
                 })
             })
-            .and_then(future::result)
-            .boxed()
+            .and_then(future::result);
+        Box::new(future)
     }
 }
 
