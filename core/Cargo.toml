@@ -10,7 +10,7 @@ repository = "https://github.com/mullvad/jsonrpc-client"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-error-chain = "0.10"
+error-chain = "0.11"
 futures = "0.1"
 jsonrpc-core = "7.0"
 log = "0.3"
