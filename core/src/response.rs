@@ -7,7 +7,6 @@
 // except according to those terms.
 
 use {Error, ErrorKind, Result, ResultExt};
-use jsonrpc_core;
 use serde;
 use serde_json::{self, Value as JsonValue};
 
@@ -43,39 +42,11 @@ fn check_response_and_get_result(mut response: JsonValue, expected_id: u64) -> R
         ErrorKind::ResponseError("Response id not equal to request id")
     );
     if let Some(error_json) = response_map.remove("error") {
-        let error = json_value_to_rpc_error(error_json)
+        let error = serde_json::from_value(error_json)
             .chain_err(|| ErrorKind::ResponseError("Malformed error object"))?;
         bail!(ErrorKind::JsonRpcError(error));
     }
     response_map
         .remove("result")
         .ok_or_else(|| ErrorKind::ResponseError("No \"result\" field").into())
-}
-
-/// Parses a `serde_json::Value` as a JSON-RPC 2.0 error.
-fn json_value_to_rpc_error(mut error_json: JsonValue) -> Result<jsonrpc_core::types::error::Error> {
-    let map = error_json
-        .as_object_mut()
-        .ok_or(ErrorKind::ResponseError("Error is not a json object"))?;
-
-    let code = map.remove("code")
-        .ok_or_else(|| {
-            ErrorKind::ResponseError("Error has no code field").into()
-        })
-        .and_then(|code| {
-            serde_json::from_value(code)
-                .chain_err(|| ErrorKind::ResponseError("Malformed code field in error"))
-        })?;
-    let message = map.get("message")
-        .and_then(|v| v.as_str())
-        .ok_or(ErrorKind::ResponseError(
-            "Error has no message field of string type",
-        ))?
-        .to_owned();
-
-    Ok(jsonrpc_core::types::error::Error {
-        code: code,
-        message: message,
-        data: map.remove("data"),
-    })
 }
