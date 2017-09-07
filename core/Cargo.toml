@@ -6,7 +6,7 @@ description = "A crate for generating transport agnostic, auto serializing, stro
 readme = "../README.md"
 keywords = ["jsonrpc", "rpc", "json-rpc", "client", "macros"]
 categories = ["encoding", "parsing", "network-programming", "web-programming"]
-repository = "https://github.com/mullvad/jsonrpc-client"
+repository = "https://github.com/mullvad/jsonrpc-client-rs"
 license = "MIT/Apache-2.0"
 
 [dependencies]
@@ -16,3 +16,9 @@ jsonrpc-core = "7.0"
 log = "0.3"
 serde = "1.0"
 serde_json = "1.0"
+
+
+[badges]
+travis-ci = { repository = "mullvad/jsonrpc-client-rs" }
+appveyor = { repository = "mullvad/jsonrpc-client-rs" }
+
