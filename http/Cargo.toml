@@ -10,7 +10,7 @@ repository = "https://github.com/mullvad/jsonrpc-client"
 license = "MIT/Apache-2.0"
 
 [dependencies]
-error-chain = "0.10"
+error-chain = "0.11"
 futures = "0.1.15"
 hyper = "0.11"
 hyper-tls = { version = "0.1", optional = true }
