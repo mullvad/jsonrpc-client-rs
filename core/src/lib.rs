@@ -91,7 +91,7 @@ error_chain! {
             display("Unable to deserialize the response: {}", msg)
         }
         /// The request was replied to, but with a JSON-RPC 2.0 error.
-        JsonRpcError(error: jsonrpc_core::types::error::Error) {
+        JsonRpcError(error: jsonrpc_core::Error) {
             description("Method call returned JSON-RPC 2.0 error")
             display("JSON-RPC 2.0 Error: {} ({})", error.code.description(), error.message)
         }
@@ -277,7 +277,7 @@ mod tests {
         let mut client = TestRpcClient::new(ErrorTransport);
         let error = client.ping("").call().unwrap_err();
         if let &ErrorKind::JsonRpcError(ref json_error) = error.kind() {
-            use jsonrpc_core::types::error::ErrorCode;
+            use jsonrpc_core::ErrorCode;
             assert_eq!(ErrorCode::InvalidRequest, json_error.code);
             assert_eq!("This was an invalid request", json_error.message);
             assert_eq!(Some(json!{[1, 2, 3]}), json_error.data);
