@@ -6,7 +6,7 @@ description = "A transport implementation for jsonrpc-client-core based on Hyper
 readme = "README.md"
 keywords = ["jsonrpc", "rpc", "client", "http", "https"]
 categories = ["network-programming", "web-programming", "web-programming::http-client"]
-repository = "https://github.com/mullvad/jsonrpc-client"
+repository = "https://github.com/mullvad/jsonrpc-client-rs"
 license = "MIT/Apache-2.0"
 
 [dependencies]
