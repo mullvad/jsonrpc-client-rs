@@ -7,6 +7,7 @@
 // except according to those terms.
 
 use {Error, ErrorKind, Result, ResultExt};
+use jsonrpc_core;
 use serde;
 use serde_json::{self, Value as JsonValue};
 
@@ -42,7 +43,7 @@ fn check_response_and_get_result(mut response: JsonValue, expected_id: u64) -> R
         ErrorKind::ResponseError("Response id not equal to request id")
     );
     if let Some(error_json) = response_map.remove("error") {
-        let error = serde_json::from_value(error_json)
+        let error: jsonrpc_core::Error = serde_json::from_value(error_json)
             .chain_err(|| ErrorKind::ResponseError("Malformed error object"))?;
         bail!(ErrorKind::JsonRpcError(error));
     }
