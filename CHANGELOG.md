@@ -5,14 +5,27 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Add badges to Cargo.toml.
+
 ### Changed
-- Make internal macro `expand_params` hidden from documentation.
+- Hide internal macro `expand_params` from documentation.
+- Upgrade `error-chain` to 0.11 to get rid of warnings on nightly.
+- Use deserialization support on `jsonrpc-core::Error` instead of implementing it manually.
+
+### Fixed
+- Fix repository url in Cargo.toml.
+
+### Security
+- Upgrade `jsonrpc-core` to 7.1.1 to avoid possible `ErrorKind` deserialization panic.
+
 
 ## [0.2.0] - 2017-08-31
 ### Changed
 - Make transport implementations responsible for IDs for requests.
 - Change core Transport trait to return futures and have the error as associated type.
 - Rewrite basically everything into an async fashion with futures.
+
 
 ## [0.1.0] - 2017-07-19
 ### Added
