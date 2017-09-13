@@ -31,7 +31,12 @@
 //! [`HttpTransport::shared`](struct.HttpTransport.html#method.shared) support both plaintext http
 //! and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
 //!
-//! # Usage
+//! # Examples
+//!
+//! See the integration test in `tests/localhost.rs` for code that creates an actual HTTP server
+//! with `jsonrpc_http_server`, and sends requests to it with this crate.
+//!
+//! Here is a small example of how to use this crate together with `jsonrpc_core`:
 //!
 //! ```rust,no_run
 //! #[macro_use] extern crate jsonrpc_client_core;

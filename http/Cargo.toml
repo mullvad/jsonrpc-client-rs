@@ -26,9 +26,9 @@ tls = ["hyper-tls", "native-tls"]
 
 [dev-dependencies]
 env_logger = "*"
-jsonrpc-core = "7.1.0"
-jsonrpc-macros = "7.1.0"
-jsonrpc-http-server = "7.1.0"
+jsonrpc-core = "7.1.1"
+jsonrpc-macros = "7.1.1"
+jsonrpc-http-server = "7.1.1"
 
 
 [badges]
