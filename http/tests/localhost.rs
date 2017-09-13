@@ -65,8 +65,9 @@ fn localhost_ping_pong() {
     let rpc_future1 = client.to_upper("MaKe me UppeRcase!!1");
     let rpc_future2 = client.to_upper("foobar");
 
+    let joined_future = rpc_future1.join(rpc_future2);
     // Run the event loop with the two calls to make them actually run.
-    let (result1, result2) = core.run(rpc_future1.join(rpc_future2)).unwrap();
+    let (result1, result2) = core.run(joined_future).unwrap();
 
     assert_eq!("MAKE ME UPPERCASE!!1", result1);
     assert_eq!("FOOBAR", result2);
