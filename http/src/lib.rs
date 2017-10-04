@@ -309,10 +309,10 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
             })
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
-                response_tx.send(response_result).map_err(|_| {
+                if let Err(_) = response_tx.send(response_result) {
                     warn!("Unable to send response back to caller");
-                    ()
-                })
+                }
+                Ok(())
             })
     });
     Box::new(f) as Box<Future<Item = (), Error = ()>>
