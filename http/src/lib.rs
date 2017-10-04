@@ -229,10 +229,12 @@ impl HttpTransport {
                 Ok((mut core, request_tx, future)) => {
                     tx.send(Ok(HttpTransport::new_internal(request_tx)))
                         .unwrap();
-                    let _ = core.run(future);
+                    if let Err(_) = core.run(future) {
+                        error!("JSON-RPC processing thread had an error");
+                    }
+                    debug!("Standalone HttpTransport thread exiting");
                 }
             }
-            debug!("Standalone HttpTransport thread exiting");
         });
 
         rx.recv().unwrap()
@@ -291,6 +293,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
     client: Client<CC, hyper::Body>,
 ) -> Box<Future<Item = (), Error = ()>> {
     let f = request_rx.for_each(move |(request, response_tx)| {
+        trace!("Sending request to {}", request.uri());
         client
             .request(request)
             .from_err()
