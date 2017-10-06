@@ -18,14 +18,14 @@ native-tls = { version = "0.1", optional = true }
 log = "0.3"
 tokio-core = "0.1"
 
-jsonrpc-client-core = { path = "../core" }
+jsonrpc-client-core = { version = "0.2.1", path = "../core" }
 
 [features]
 default = ["tls"]
 tls = ["hyper-tls", "native-tls"]
 
 [dev-dependencies]
-env_logger = "*"
+env_logger = "0.4"
 jsonrpc-core = "7.1.1"
 jsonrpc-macros = "7.1.1"
 jsonrpc-http-server = "7.1.1"
