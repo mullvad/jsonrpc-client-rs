@@ -7,7 +7,7 @@
 // except according to those terms.
 
 use {ErrorKind, Result, ResultExt};
-use jsonrpc_core::types::{Id, Version, Output};
+use jsonrpc_core::types::{Id, Output, Version};
 use serde;
 use serde_json;
 
@@ -25,11 +25,11 @@ where
             debug!("Received json result: {}", success.result);
             serde_json::from_value::<R>(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
-        },
+        }
         Output::Failure(failure) => {
             check_response(failure.jsonrpc, failure.id, expected_id)?;
             Err(ErrorKind::JsonRpcError(failure.error).into())
-        },
+        }
     }
 }
 
