@@ -204,7 +204,7 @@ where
     };
     let method_call = MethodCall {
         jsonrpc: Some(Version::V2),
-        method: method.to_owned(),
+        method,
         params: serialized_params,
         id,
     };
