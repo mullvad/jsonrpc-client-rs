@@ -151,7 +151,7 @@ pub fn call_method<T, P, R>(mut transport: T, method: &str, params: P) -> RpcReq
 where
     T: Transport,
     P: serde::Serialize,
-    for<'de> R: serde::Deserialize<'de> + Send + 'static,
+    R: serde::de::DeserializeOwned + Send + 'static,
 {
     let id = transport.get_next_id();
     trace!("Serializing call to method \"{}\" with id {}", method, id);
