@@ -8,12 +8,13 @@
 
 use {Error, ErrorKind, Result, ResultExt};
 use jsonrpc_core;
+use jsonrpc_core::types::Id;
 use serde;
 use serde_json::{self, Value as JsonValue};
 
 /// Parses a binary response into json, extracts the "result" field and tries to deserialize that
 /// to the desired type.
-pub fn parse<R>(response: &[u8], expected_id: u64) -> Result<R>
+pub fn parse<R>(response: &[u8], expected_id: Id) -> Result<R>
 where
     for<'de> R: serde::Deserialize<'de>,
 {
@@ -30,7 +31,7 @@ fn deserialize_response(response: &[u8]) -> Result<JsonValue> {
 
 /// Validate if response is a valid JSON-RPC 2.0 response object. If it is, it returns the
 /// content of the "result" field of that object.
-fn check_response_and_get_result(mut response: JsonValue, expected_id: u64) -> Result<JsonValue> {
+fn check_response_and_get_result(mut response: JsonValue, expected_id: Id) -> Result<JsonValue> {
     let response_map = response.as_object_mut().ok_or_else(|| {
         Error::from_kind(ErrorKind::ResponseError("Not a json object"))
     })?;
@@ -39,7 +40,7 @@ fn check_response_and_get_result(mut response: JsonValue, expected_id: u64) -> R
         ErrorKind::ResponseError("Not JSON-RPC 2.0 compatible")
     );
     ensure!(
-        response_map.get("id") == Some(&JsonValue::from(expected_id)),
+        response_map.get("id") == serde_json::to_value(expected_id).ok().as_ref(),
         ErrorKind::ResponseError("Response id not equal to request id")
     );
     if let Some(error_json) = response_map.remove("error") {

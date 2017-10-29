@@ -64,6 +64,7 @@ extern crate serde_json;
 
 use futures::future::Future;
 use serde_json::Value as JsonValue;
+use jsonrpc_core::types::Id;
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -175,7 +176,7 @@ where
                 method_copy2,
                 id
             );
-            response::parse::<R>(&response_raw, id)
+            response::parse::<R>(&response_raw, Id::Num(id))
         });
     RpcRequest(Box::new(future))
 }
