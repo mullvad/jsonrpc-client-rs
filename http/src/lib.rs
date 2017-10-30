@@ -80,16 +80,12 @@ extern crate native_tls;
 
 use futures::{future, Future, Stream};
 use futures::sync::{mpsc, oneshot};
-
 use hyper::{Client, Request, StatusCode, Uri};
-
 use jsonrpc_client_core::{BoxFuture, Transport};
-
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-
 use tokio_core::reactor::Core;
 pub use tokio_core::reactor::Handle;
 
@@ -221,19 +217,17 @@ impl HttpTransport {
 
     fn standalone_internal<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
-        thread::spawn(move || {
-            match create_standalone_core(client_creator) {
-                Err(e) => {
-                    tx.send(Err(e)).unwrap();
+        thread::spawn(move || match create_standalone_core(client_creator) {
+            Err(e) => {
+                tx.send(Err(e)).unwrap();
+            }
+            Ok((mut core, request_tx, future)) => {
+                tx.send(Ok(HttpTransport::new_internal(request_tx)))
+                    .unwrap();
+                if let Err(_) = core.run(future) {
+                    error!("JSON-RPC processing thread had an error");
                 }
-                Ok((mut core, request_tx, future)) => {
-                    tx.send(Ok(HttpTransport::new_internal(request_tx)))
-                        .unwrap();
-                    if let Err(_) = core.run(future) {
-                        error!("JSON-RPC processing thread had an error");
-                    }
-                    debug!("Standalone HttpTransport thread exiting");
-                }
+                debug!("Standalone HttpTransport thread exiting");
             }
         });
 
@@ -398,8 +392,8 @@ mod tests {
     #[test]
     fn failing_client_creator() {
         let error = HttpTransport::with_client(|_: &Handle| {
-            Err(io::Error::new(io::ErrorKind::Other, "Dummy error")) as
-                ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+            Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
+                as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
         }).unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),

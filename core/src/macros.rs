@@ -36,7 +36,7 @@ macro_rules! jsonrpc_client {
                 {
                     let method = String::from(stringify!($method));
                     let params = expand_params!($($arg_name,)*);
-                    $crate::call_method($selff.transport.clone(), method, params)
+                    $crate::call_method(&mut $selff.transport, method, params)
                 }
             )*
         }
