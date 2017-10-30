@@ -34,7 +34,7 @@ macro_rules! jsonrpc_client {
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
                     -> $crate::RpcRequest<$return_ty>
                 {
-                    let method = stringify!($method);
+                    let method = String::from(stringify!($method));
                     let params = expand_params!($($arg_name,)*);
                     $crate::call_method($selff.transport.clone(), method, params)
                 }
