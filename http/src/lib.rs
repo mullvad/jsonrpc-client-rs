@@ -206,7 +206,7 @@ impl HttpTransport {
     }
 
     /// Creates a `HttpTransport` backed by the Tokio `Handle` given to it, just like
-    ///[`shared`](#method.shared), but with a custom Hyper Client. See
+    /// [`shared`](#method.shared), but with a custom Hyper Client. See
     /// [`with_client`](#method.with_client) for an example.
     pub fn with_client_shared<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
     where
@@ -298,9 +298,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
                     future::err(ErrorKind::HttpError(response.status()).into())
                 }
             })
-            .and_then(|response: hyper::Response| {
-                response.body().concat2().from_err()
-            })
+            .and_then(|response: hyper::Response| response.body().concat2().from_err())
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
                 if let Err(_) = response_tx.send(response_result) {
