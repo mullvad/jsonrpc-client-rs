@@ -22,7 +22,7 @@ where
     match response {
         Output::Success(success) => {
             check_response(success.jsonrpc, success.id, expected_id)?;
-            debug!("Received json result: {}", success.result);
+            trace!("Received json result: {}", success.result);
             serde_json::from_value::<R>(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
         }
