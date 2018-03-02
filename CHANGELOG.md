@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 
+## [0.3.0] - 2018-03-06
+### Changed
+- Move logging of json responses from debug to trace level.
+- Remove `Clone` bound on `Transport` trait.
+
+
 ## [0.2.2] - 2017-10-05
 ### Added
 - Add integration test in http crate. Testing actual network traffic.
