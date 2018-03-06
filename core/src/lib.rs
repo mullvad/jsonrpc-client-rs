@@ -26,7 +26,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! #[macro_use] extern crate jsonrpc_client_core;
+//! #[macro_use]
+//! extern crate jsonrpc_client_core;
 //! extern crate jsonrpc_client_http;
 //!
 //! use jsonrpc_client_http::HttpTransport;
@@ -38,7 +39,9 @@
 //!
 //! fn main() {
 //!     let transport = HttpTransport::new().unwrap();
-//!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
+//!     let transport_handle = transport
+//!         .handle("https://api.fizzbuzzexample.org/rpc/")
+//!         .unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
 //!     let result2 = client.fizz_buzz(4).call().unwrap();
@@ -210,7 +213,6 @@ where
     };
     serde_json::to_vec(&method_call)
 }
-
 
 
 #[cfg(test)]
