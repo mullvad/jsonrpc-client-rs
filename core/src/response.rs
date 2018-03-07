@@ -19,29 +19,22 @@ where
 {
     let response: Output = serde_json::from_slice(response_raw)
         .chain_err(|| ErrorKind::ResponseError("Not valid json"))?;
+    ensure!(
+        response.version() == Some(Version::V2),
+        ErrorKind::ResponseError("Not JSON-RPC 2.0 compatible")
+    );
+    ensure!(
+        response.id() == &expected_id,
+        ErrorKind::ResponseError("Response id not equal to request id")
+    );
     match response {
         Output::Success(success) => {
-            check_response(success.jsonrpc, success.id, expected_id)?;
             trace!("Received json result: {}", success.result);
             serde_json::from_value::<R>(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
         }
         Output::Failure(failure) => {
-            check_response(failure.jsonrpc, failure.id, expected_id)?;
             Err(ErrorKind::JsonRpcError(failure.error).into())
         }
     }
-}
-
-/// Validate if response is a valid JSON-RPC 2.0 response object with the correct Id.
-fn check_response(version: Option<Version>, id: Id, expected_id: Id) -> Result<()> {
-    ensure!(
-        version == Some(Version::V2),
-        ErrorKind::ResponseError("Not JSON-RPC 2.0 compatible")
-    );
-    ensure!(
-        id == expected_id,
-        ErrorKind::ResponseError("Response id not equal to request id")
-    );
-    Ok(())
 }
