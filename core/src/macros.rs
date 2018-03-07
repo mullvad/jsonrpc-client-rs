@@ -32,7 +32,7 @@ macro_rules! jsonrpc_client {
             $(
                 $(#[$doc])*
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
-                    -> $crate::RpcRequest<$return_ty>
+                    -> $crate::RpcRequest<$return_ty, T::Future>
                 {
                     let method = String::from(stringify!($method));
                     let params = expand_params!($($arg_name,)*);
