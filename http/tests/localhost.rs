@@ -6,7 +6,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-extern crate env_logger;
 extern crate futures;
 #[macro_use]
 extern crate jsonrpc_client_core;
@@ -48,8 +47,6 @@ jsonrpc_client!(pub struct TestClient {
 
 #[test]
 fn localhost_ping_pong() {
-    let _ = env_logger::init();
-
     // Spawn a server hosting the `ServerApi` API.
     let (_server, uri) = spawn_server();
     println!("Testing towards server at {}", uri);
@@ -79,8 +76,6 @@ fn localhost_ping_pong() {
 
 #[test]
 fn dropped_rpc_request_should_not_crash_transport() {
-    let _ = env_logger::init();
-
     let (_server, uri) = spawn_server();
 
     let mut core = Core::new().unwrap();
