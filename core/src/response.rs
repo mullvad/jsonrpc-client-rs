@@ -30,9 +30,9 @@ where
     match response {
         Output::Success(success) => {
             trace!("Received json result: {}", success.result);
-            serde_json::from_value::<R>(success.result)
+            serde_json::from_value(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
         }
-        Output::Failure(failure) => Err(ErrorKind::JsonRpcError(failure.error).into()),
+        Output::Failure(failure) => bail!(ErrorKind::JsonRpcError(failure.error)),
     }
 }
