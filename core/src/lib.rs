@@ -144,16 +144,14 @@ where
 
 struct InnerRpcRequest<T, F> {
     transport_future: F,
-    method: String,
     id: Id,
     _marker: ::std::marker::PhantomData<T>,
 }
 
 impl<T, F> InnerRpcRequest<T, F> {
-    fn new(transport_future: F, method: String, id: Id) -> Self {
+    fn new(transport_future: F, id: Id) -> Self {
         Self {
             transport_future,
-            method,
             id,
             _marker: ::std::marker::PhantomData,
         }
@@ -176,9 +174,8 @@ where
                 .chain_err(|| ErrorKind::TransportError)
         );
         trace!(
-            "Deserializing {} byte response to method \"{}\" with id {:?}",
+            "Deserializing {} byte response to request with id {:?}",
             response_raw.len(),
-            self.method,
             self.id
         );
         response::parse(&response_raw, &self.id).map(|t| Async::Ready(t))
@@ -224,13 +221,13 @@ where
 {
     let id = Id::Num(transport.get_next_id());
     trace!("Serializing call to method \"{}\" with id {:?}", method, id);
-    let request_serialization_result = serialize_request(id.clone(), method.clone(), params)
+    let request_serialization_result = serialize_request(id.clone(), method, params)
         .chain_err(|| ErrorKind::SerializeError);
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
             let transport_future = transport.send(request_raw);
-            RpcRequest(Ok(InnerRpcRequest::new(transport_future, method, id)))
+            RpcRequest(Ok(InnerRpcRequest::new(transport_future, id)))
         }
     }
 }
