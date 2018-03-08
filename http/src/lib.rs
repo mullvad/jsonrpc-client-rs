@@ -345,7 +345,7 @@ impl Transport for HttpHandle {
     }
 
     fn send(&self, json_data: Vec<u8>) -> Self::Future {
-        let request = self.create_request(json_data.clone());
+        let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
         let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
             .map_err(|e| {
