@@ -26,10 +26,12 @@
 //!
 //! TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
 //!
-//! When TLS support is compiled in the instances returned by
-//! [`HttpTransport::new`](struct.HttpTransport.html#method.new) and
-//! [`HttpTransport::shared`](struct.HttpTransport.html#method.shared) support both plaintext http
-//! and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
+//! When TLS support is compiled in the builder returned by [`HttpTransport::new`] will create a
+//! [`HttpTransport`] that supports both plaintext http and https over TLS, backed by the
+//! `hyper_tls::HttpsConnector` connector.
+//!
+//! [`HttpTransport`]: struct.HttpTransport.html
+//! [`HttpTransport::new`]: struct.HttpTransport.html#method.new
 //!
 //! # Examples
 //!
@@ -50,7 +52,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::new().unwrap();
+//!     let transport = HttpTransport::new().standalone().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
@@ -140,119 +142,24 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     #[cfg(not(feature = "tls"))]
-    /// Creates a `HttpTransport` backed by its own Tokio `Core` running in a separate thread that
-    /// is exclusive to this transport instance. To make the transport run on an existing event
-    /// loop, use the [`shared`](#method.shared) method instead.
+    /// Returns a builder to create a `HttpTransport`.
     ///
-    /// The transport returned from this method will not support https. Either compile the crate
-    /// with the "tls" feature to get that functionality, or provide a custom Hyper client via the
-    /// [`with_client`](#method.with_client) that supports TLS.
-    pub fn new() -> Result<HttpTransport> {
-        Self::standalone_internal(DefaultClient)
+    /// The final transport that is created will not support https. Either compile the crate with
+    /// the "tls" feature to get that functionality, or provide a custom Hyper client that supports
+    /// TLS via the [`HttpTransportBuilder::with_client`][with_client] method.
+    ///
+    /// [with_client]: struct.HttpTransportBuilder.html#method.with_client
+    pub fn new() -> HttpTransportBuilder<DefaultClient> {
+        HttpTransportBuilder::with_client(DefaultClient)
     }
 
     #[cfg(feature = "tls")]
-    /// Creates a `HttpTransport` backed by its own Tokio `Core` running in a separate thread that
-    /// is exclusive to this transport instance. To make the transport run on an existing event
-    /// loop, use the [`shared`](#method.shared) method instead.
+    /// Returns a builder to create a `HttpTransport`.
     ///
-    /// The transport returned from this method uses the `hyper_tls::HttpsConnector` connector, and
+    /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
     /// supports both http and https connections.
-    pub fn new() -> Result<HttpTransport> {
-        Self::standalone_internal(DefaultTlsClient)
-    }
-
-    /// Creates a `HttpTransport` backed by the Tokio `Handle` given to it. Use the
-    /// [`new`](#method.new) method to make it create its own internal event loop.
-    ///
-    /// The transport returned from this method will not support https. Either compile the crate
-    /// with the "tls" feature to get that functionality, or provide a custom Hyper client via the
-    /// [`with_client`](#method.with_client) that supports TLS.
-    #[cfg(not(feature = "tls"))]
-    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
-        Self::shared_internal(DefaultClient, handle)
-    }
-
-    /// Creates a `HttpTransport` backed by the Tokio `Handle` given to it. Use the
-    /// [`new`](#method.new) method to make it create its own internal event loop.
-    ///
-    /// The transport returned from this method uses the `hyper_tls::HttpsConnector` connector, and
-    /// supports both http and https connections.
-    #[cfg(feature = "tls")]
-    pub fn shared(handle: &Handle) -> Result<HttpTransport> {
-        Self::shared_internal(DefaultTlsClient, handle)
-    }
-
-    /// Creates a `HttpTransport` backed by its own Tokio Core, just like [`new`](#method.new),
-    /// but with a custom Hyper Client.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # extern crate jsonrpc_client_http;
-    /// # extern crate hyper;
-    /// # use std::io;
-    /// # use jsonrpc_client_http::{HttpTransport, Handle};
-    ///
-    /// # fn main() {
-    /// HttpTransport::with_client(|handle: &Handle| {
-    ///     Ok(hyper::Client::configure()
-    ///         .keep_alive(false)
-    ///         .build(handle)
-    ///     ) as Result<_, io::Error>
-    /// }).unwrap();
-    /// # }
-    /// ```
-    pub fn with_client<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
-        Self::standalone_internal(client_creator)
-    }
-
-    /// Creates a `HttpTransport` backed by the Tokio `Handle` given to it, just like
-    /// [`shared`](#method.shared), but with a custom Hyper Client. See
-    /// [`with_client`](#method.with_client) for an example.
-    pub fn with_client_shared<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
-    where
-        C: ClientCreator,
-    {
-        Self::shared_internal(client_creator, handle)
-    }
-
-    fn standalone_internal<C: ClientCreator>(client_creator: C) -> Result<HttpTransport> {
-        let (tx, rx) = ::std::sync::mpsc::channel();
-        thread::spawn(move || match create_standalone_core(client_creator) {
-            Err(e) => {
-                tx.send(Err(e)).unwrap();
-            }
-            Ok((mut core, request_tx, future)) => {
-                tx.send(Ok(HttpTransport::new_internal(request_tx)))
-                    .unwrap();
-                if let Err(_) = core.run(future) {
-                    error!("JSON-RPC processing thread had an error");
-                }
-                debug!("Standalone HttpTransport thread exiting");
-            }
-        });
-
-        rx.recv().unwrap()
-    }
-
-    fn shared_internal<C>(client_creator: C, handle: &Handle) -> Result<HttpTransport>
-    where
-        C: ClientCreator,
-    {
-        let client = client_creator
-            .create(handle)
-            .chain_err(|| ErrorKind::ClientCreatorError)?;
-        let (request_tx, request_rx) = mpsc::unbounded();
-        handle.spawn(create_request_processing_future(request_rx, client));
-        Ok(HttpTransport::new_internal(request_tx))
-    }
-
-    fn new_internal(request_tx: CoreSender) -> HttpTransport {
-        HttpTransport {
-            request_tx,
-            id: Arc::new(AtomicUsize::new(1)),
-        }
+    pub fn new() -> HttpTransportBuilder<DefaultTlsClient> {
+        HttpTransportBuilder::with_client(DefaultTlsClient)
     }
 
     /// Returns a handle to this `HttpTransport` valid for a given URI.
@@ -267,6 +174,78 @@ impl HttpTransport {
             id: self.id.clone(),
             headers: header::Headers::new(),
         })
+    }
+}
+
+/// Builder type for `HttpTransport`.
+///
+/// Can be finished by the [`standalone()`](struct.HttpTransportBuilder.html#method.standalone)
+/// method, where it is backed by its own Tokio `Core` running in a separate thread, or by the
+/// [`shared(handle)`](struct.HttpTransportBuilder.html#method.shared) method, where it is backed by
+/// the Tokio `Handle` given to it.
+pub struct HttpTransportBuilder<C: ClientCreator> {
+    client_creator: C,
+}
+
+impl<C: ClientCreator> HttpTransportBuilder<C> {
+    /// Returns a builder to create a `HttpTransport` using the provided `ClientCreator`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # extern crate jsonrpc_client_http;
+    /// # extern crate hyper;
+    /// # use std::io;
+    /// # use jsonrpc_client_http::{HttpTransportBuilder, Handle};
+    ///
+    /// # fn main() {
+    /// HttpTransportBuilder::with_client(|handle: &Handle| {
+    ///     Ok(hyper::Client::configure().keep_alive(false).build(handle)) as Result<_, io::Error>
+    /// }).standalone()
+    ///     .unwrap();
+    /// # }
+    /// ```
+    pub fn with_client(client_creator: C) -> HttpTransportBuilder<C> {
+        HttpTransportBuilder { client_creator }
+    }
+
+    /// Creates the final `HttpTransport` backed by its own Tokio `Core` running in a separate
+    /// thread that is exclusive to this transport instance. To make the transport run on an
+    /// existing event loop, use the [`shared`](#method.shared) method instead.
+    pub fn standalone(self) -> Result<HttpTransport> {
+        let (tx, rx) = ::std::sync::mpsc::channel();
+        thread::spawn(move || match create_standalone_core(self.client_creator) {
+            Err(e) => {
+                tx.send(Err(e)).unwrap();
+            }
+            Ok((mut core, request_tx, future)) => {
+                tx.send(Ok(Self::build(request_tx))).unwrap();
+                if let Err(_) = core.run(future) {
+                    error!("JSON-RPC processing thread had an error");
+                }
+                debug!("Standalone HttpTransport thread exiting");
+            }
+        });
+
+        rx.recv().unwrap()
+    }
+
+    /// Creates the final `HttpTransport` backed by the Tokio `Handle` given to it. Use the
+    /// [`standalone`](#method.standalone) method to make it create its own internal event loop.
+    pub fn shared(self, handle: &Handle) -> Result<HttpTransport> {
+        let client = self.client_creator
+            .create(handle)
+            .chain_err(|| ErrorKind::ClientCreatorError)?;
+        let (request_tx, request_rx) = mpsc::unbounded();
+        handle.spawn(create_request_processing_future(request_rx, client));
+        Ok(Self::build(request_tx))
+    }
+
+    fn build(request_tx: CoreSender) -> HttpTransport {
+        HttpTransport {
+            request_tx,
+            id: Arc::new(AtomicUsize::new(1)),
+        }
     }
 }
 
@@ -386,27 +365,29 @@ mod tests {
     #[test]
     fn new_shared() {
         let core = Core::new().unwrap();
-        HttpTransport::shared(&core.handle()).unwrap();
+        HttpTransport::new().shared(&core.handle()).unwrap();
     }
 
     #[test]
     fn new_standalone() {
-        HttpTransport::new().unwrap();
+        HttpTransport::new().standalone().unwrap();
     }
 
     #[test]
     fn new_custom_client() {
-        HttpTransport::with_client(|handle: &Handle| {
+        HttpTransportBuilder::with_client(|handle: &Handle| {
             Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
-        }).unwrap();
+        }).standalone()
+            .unwrap();
     }
 
     #[test]
     fn failing_client_creator() {
-        let error = HttpTransport::with_client(|_: &Handle| {
+        let error = HttpTransportBuilder::with_client(|_: &Handle| {
             Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
                 as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-        }).unwrap_err();
+        }).standalone()
+            .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
