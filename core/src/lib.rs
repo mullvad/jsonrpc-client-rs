@@ -38,7 +38,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::new().unwrap();
+//!     let transport = HttpTransport::new().standalone().unwrap();
 //!     let transport_handle = transport
 //!         .handle("https://api.fizzbuzzexample.org/rpc/")
 //!         .unwrap();
