@@ -13,7 +13,7 @@ use serde_json;
 
 /// Parses a binary response into json, extracts the "result" field and tries to deserialize that
 /// to the desired type.
-pub fn parse<R>(response_raw: &[u8], expected_id: Id) -> Result<R>
+pub fn parse<R>(response_raw: &[u8], expected_id: &Id) -> Result<R>
 where
     R: serde::de::DeserializeOwned,
 {
@@ -24,17 +24,15 @@ where
         ErrorKind::ResponseError("Not JSON-RPC 2.0 compatible")
     );
     ensure!(
-        response.id() == &expected_id,
+        response.id() == expected_id,
         ErrorKind::ResponseError("Response id not equal to request id")
     );
     match response {
         Output::Success(success) => {
             trace!("Received json result: {}", success.result);
-            serde_json::from_value::<R>(success.result)
+            serde_json::from_value(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
         }
-        Output::Failure(failure) => {
-            Err(ErrorKind::JsonRpcError(failure.error).into())
-        }
+        Output::Failure(failure) => bail!(ErrorKind::JsonRpcError(failure.error)),
     }
 }

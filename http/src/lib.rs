@@ -81,7 +81,7 @@ extern crate native_tls;
 use futures::{future, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
-use jsonrpc_client_core::{BoxFuture, Transport};
+use jsonrpc_client_core::Transport;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -118,6 +118,7 @@ error_chain! {
 
 type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
 type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
+
 
 /// The main struct of the HTTP transport implementation for
 /// [`jsonrpc_client_core`](../jsonrpc_client_core).
@@ -336,14 +337,15 @@ impl HttpHandle {
 }
 
 impl Transport for HttpHandle {
+    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
     type Error = Error;
 
     fn get_next_id(&mut self) -> u64 {
         self.id.fetch_add(1, Ordering::SeqCst) as u64
     }
 
-    fn send(&self, json_data: Vec<u8>) -> BoxFuture<Vec<u8>, Error> {
-        let request = self.create_request(json_data.clone());
+    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+        let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
         let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
             .map_err(|e| {

@@ -11,14 +11,14 @@
 #[macro_export]
 macro_rules! jsonrpc_client {
     (
-        $(#[$struct_doc:meta])*
+        $(#[$struct_attr:meta])*
         pub struct $struct_name:ident {$(
-            $(#[$doc:meta])*
+            $(#[$attr:meta])*
             pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
                 -> RpcRequest<$return_ty:ty>;
         )*}
     ) => (
-        $(#[$struct_doc])*
+        $(#[$struct_attr])*
         pub struct $struct_name<T: $crate::Transport> {
             transport: T,
         }
@@ -30,9 +30,9 @@ macro_rules! jsonrpc_client {
             }
 
             $(
-                $(#[$doc])*
+                $(#[$attr])*
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
-                    -> $crate::RpcRequest<$return_ty>
+                    -> $crate::RpcRequest<$return_ty, T::Future>
                 {
                     let method = String::from(stringify!($method));
                     let params = expand_params!($($arg_name,)*);
