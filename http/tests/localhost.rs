@@ -55,7 +55,8 @@ fn localhost_ping_pong() {
     let mut core = Core::new().unwrap();
 
     // Create the HTTP transport handle and create a RPC client with that handle.
-    let transport = HttpTransport::shared(&core.handle())
+    let transport = HttpTransport::new()
+        .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
@@ -79,7 +80,8 @@ fn dropped_rpc_request_should_not_crash_transport() {
     let (_server, uri) = spawn_server();
 
     let mut core = Core::new().unwrap();
-    let transport = HttpTransport::shared(&core.handle())
+    let transport = HttpTransport::new()
+        .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
