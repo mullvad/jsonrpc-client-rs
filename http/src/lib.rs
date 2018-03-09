@@ -66,6 +66,7 @@
 
 #[macro_use]
 extern crate error_chain;
+#[macro_use]
 extern crate futures;
 extern crate hyper;
 extern crate jsonrpc_client_core;
@@ -78,15 +79,19 @@ extern crate hyper_tls;
 #[cfg(feature = "tls")]
 extern crate native_tls;
 
-use futures::{future, Future, Stream};
+use futures::{Future, IntoFuture, Poll, Stream};
+use futures::future::{self, Flatten, FutureResult};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
 use jsonrpc_client_core::Transport;
+use std::io;
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use tokio_core::reactor::Core;
+use std::time::Duration;
+use tokio_core::reactor::{Core, Timeout};
 pub use tokio_core::reactor::Handle;
 
 mod client_creator;
@@ -102,6 +107,14 @@ error_chain! {
         HttpError(http_code: StatusCode) {
             description("Http error. Server did not return 200 OK")
             display("Http error. Status code {}", http_code)
+        }
+        /// When the request times out.
+        RequestTimeout {
+            description("Timeout while waiting for a request")
+        }
+        /// When there was an error setting up a timeout.
+        TimeoutError {
+            description("Failed to configure a timeout")
         }
         /// When there was an error in the Tokio Core.
         TokioCoreError(msg: &'static str) {
@@ -206,11 +219,21 @@ impl HttpTransport {
 /// Builder type for `HttpTransport`.
 pub struct HttpTransportBuilder<C: ClientCreator> {
     client_creator: C,
+    timeout: Option<Duration>,
 }
 
 impl<C: ClientCreator> HttpTransportBuilder<C> {
     fn new(client_creator: C) -> Self {
-        HttpTransportBuilder { client_creator }
+        HttpTransportBuilder {
+            client_creator,
+            timeout: None,
+        }
+    }
+
+    /// Configure the timeout for RPC requests.
+    pub fn timeout(mut self, duration: Duration) -> Self {
+        self.timeout = Some(duration);
+        self
     }
 
     /// Creates the final `HttpTransport` backed by its own Tokio `Core` running in a separate
@@ -218,18 +241,20 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// existing event loop, use the [`shared`](#method.shared) method instead.
     pub fn standalone(self) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
-        thread::spawn(move || match create_standalone_core(self.client_creator) {
-            Err(e) => {
-                tx.send(Err(e)).unwrap();
-            }
-            Ok((mut core, request_tx, future)) => {
-                tx.send(Ok(Self::build(request_tx))).unwrap();
-                if let Err(_) = core.run(future) {
-                    error!("JSON-RPC processing thread had an error");
+        thread::spawn(
+            move || match create_standalone_core(self.client_creator, self.timeout) {
+                Err(e) => {
+                    tx.send(Err(e)).unwrap();
                 }
-                debug!("Standalone HttpTransport thread exiting");
-            }
-        });
+                Ok((mut core, request_tx, future)) => {
+                    tx.send(Ok(Self::build(request_tx))).unwrap();
+                    if let Err(_) = core.run(future) {
+                        error!("JSON-RPC processing thread had an error");
+                    }
+                    debug!("Standalone HttpTransport thread exiting");
+                }
+            },
+        );
 
         rx.recv().unwrap()
     }
@@ -241,7 +266,12 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
             .create(handle)
             .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();
-        handle.spawn(create_request_processing_future(request_rx, client));
+        handle.spawn(create_request_processing_future(
+            request_rx,
+            client,
+            self.timeout,
+            handle.clone(),
+        ));
         Ok(Self::build(request_tx))
     }
 
@@ -253,16 +283,50 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     }
 }
 
+/// A Future that times out and returns an error with the kind RequestTimeout.
+#[derive(Debug)]
+pub struct RequestTimeout<T> {
+    timeout_future: Flatten<FutureResult<Timeout, io::Error>>,
+    _item_type: PhantomData<T>,
+}
+
+impl<T> RequestTimeout<T> {
+    /// Create a new `RequestTimeout`, ready to be used.
+    pub fn new(duration: Duration, handle: &Handle) -> Self {
+        RequestTimeout {
+            timeout_future: Timeout::new(duration, handle).into_future().flatten(),
+            _item_type: PhantomData,
+        }
+    }
+}
+
+impl<T> Future for RequestTimeout<T> {
+    type Item = T;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        try_ready!(
+            self.timeout_future
+                .poll()
+                .chain_err(|| ErrorKind::TimeoutError)
+        );
+
+        Err(ErrorKind::RequestTimeout.into())
+    }
+}
+
 /// Creates all the components needed to run the `HttpTransport` in standalone mode.
 fn create_standalone_core<C: ClientCreator>(
     client_creator: C,
+    timeout: Option<Duration>,
 ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
     let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
+    let handle = core.handle();
     let client = client_creator
-        .create(&core.handle())
+        .create(&handle)
         .chain_err(|| ErrorKind::ClientCreatorError)?;
     let (request_tx, request_rx) = mpsc::unbounded();
-    let future = create_request_processing_future(request_rx, client);
+    let future = create_request_processing_future(request_rx, client, timeout, handle);
     Ok((core, request_tx, future))
 }
 
@@ -271,12 +335,25 @@ fn create_standalone_core<C: ClientCreator>(
 fn create_request_processing_future<CC: hyper::client::Connect>(
     request_rx: CoreReceiver,
     client: Client<CC, hyper::Body>,
+    timeout: Option<Duration>,
+    handle: Handle,
 ) -> Box<Future<Item = (), Error = ()>> {
     let f = request_rx.for_each(move |(request, response_tx)| {
         trace!("Sending request to {}", request.uri());
-        client
-            .request(request)
-            .from_err()
+        let request = client.request(request).from_err();
+        let request_with_timeout: Box<
+            Future<Item = hyper::Response, Error = Error> + 'static,
+        > = match timeout {
+            Some(duration) => Box::new(
+                request
+                    .select(RequestTimeout::new(duration, &handle))
+                    .map(|(result, _)| result)
+                    .map_err(|(error, _)| error),
+            ),
+            None => Box::new(request),
+        };
+
+        request_with_timeout
             .and_then(|response: hyper::Response| {
                 if response.status() == hyper::StatusCode::Ok {
                     future::ok(response)
