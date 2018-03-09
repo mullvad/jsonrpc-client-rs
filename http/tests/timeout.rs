@@ -86,7 +86,7 @@ fn long_request_should_succeed_with_long_timeout() {
 }
 
 #[test]
-fn transport_handles_can_have_different_timeouts() {
+fn client_timeout_can_be_configured() {
     // Spawn a server hosting the `ServerApi` API.
     let (_server, uri) = spawn_server();
     println!("Testing towards slow server at {}", uri);
@@ -96,21 +96,20 @@ fn transport_handles_can_have_different_timeouts() {
 
     // Create the HTTP transport handle and create a RPC client with that handle. Set the default
     // timeout so that long requests succeed.
-    let transport = HttpTransport::new().shared(&core.handle()).unwrap();
+    let transport = HttpTransport::new()
+        .shared(&core.handle())
+        .unwrap()
+        .handle(&uri)
+        .unwrap();
+    let mut client = TestClient::new(transport);
 
-    // Perform a request using a handle that uses the default timeout.
-    let handle1 = transport.handle(&uri).unwrap();
-    let mut client1 = TestClient::new(handle1);
-    client1.set_timeout(Some(Duration::from_secs(2)));
+    // Perform a request with a timeout long enough for the request to succeed.
+    client.set_timeout(Some(Duration::from_secs(2)));
+    let rpc_future1 = client.to_upper("HARD string TAKES too LONG").then(Ok);
 
-    let rpc_future1 = client1.to_upper("HARD string TAKES too LONG").then(Ok);
-
-    // Perform a request using a handle configured with a shorter timeout.
-    let handle2 = transport.handle(&uri).unwrap();
-    let mut client2 = TestClient::new(handle2);
-    client2.set_timeout(Some(Duration::from_millis(500)));
-
-    let rpc_future2 = client2.to_upper("HARD string TAKES too LONG").then(Ok);
+    // Perform a request with a timeout that's too short.
+    client.set_timeout(Some(Duration::from_millis(500)));
+    let rpc_future2 = client.to_upper("HARD string TAKES too LONG").then(Ok);
 
     let joined_future = rpc_future1.join(rpc_future2);
     let results: Result<_, ()> = core.run(joined_future);
