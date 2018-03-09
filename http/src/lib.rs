@@ -411,10 +411,11 @@ impl Transport for HttpHandle {
         self.id.fetch_add(1, Ordering::SeqCst) as u64
     }
 
-    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+    fn send(&self, json_data: Vec<u8>, timeout: Option<Duration>) -> Self::Future {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
-        let request_task = (request, response_tx, self.timeout.clone());
+        let timeout = timeout.or_else(|| self.timeout.clone());
+        let request_task = (request, response_tx, timeout);
         let future = future::result(self.request_tx.unbounded_send(request_task))
             .map_err(|e| {
                 Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))

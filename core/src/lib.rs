@@ -66,6 +66,8 @@ extern crate serde;
 #[cfg_attr(test, macro_use)]
 extern crate serde_json;
 
+use std::time::Duration;
+
 use futures::Async;
 use futures::future::Future;
 use jsonrpc_core::types::{Id, MethodCall, Params, Version};
@@ -196,9 +198,10 @@ pub trait Transport {
     /// to fill in the "id" field of a request.
     fn get_next_id(&mut self) -> u64;
 
-    /// Sends the given data over the transport and returns a future that will complete with the
-    /// response to the request, or the transport specific error if something went wrong.
-    fn send(&self, json_data: Vec<u8>) -> Self::Future;
+    /// Sends the given data over the transport and returns a future that will attempt to complete
+    /// with the response to the request before the duration of the timeout. It may fail either by
+    /// the timeout firing or because of a transport specific error.
+    fn send(&self, json_data: Vec<u8>, timeout: Option<Duration>) -> Self::Future;
 }
 
 
@@ -226,7 +229,7 @@ where
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
-            let transport_future = transport.send(request_raw);
+            let transport_future = transport.send(request_raw, None);
             RpcRequest(Ok(InnerRpcRequest::new(transport_future, id)))
         }
     }
@@ -278,7 +281,7 @@ mod tests {
             1
         }
 
-        fn send(&self, json_data: Vec<u8>) -> Self::Future {
+        fn send(&self, json_data: Vec<u8>, _timeout: Option<Duration>) -> Self::Future {
             let json = json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -300,7 +303,7 @@ mod tests {
             1
         }
 
-        fn send(&self, _json_data: Vec<u8>) -> Self::Future {
+        fn send(&self, _json_data: Vec<u8>, _timeout: Option<Duration>) -> Self::Future {
             let json = json!({
                 "jsonrpc": "2.0",
                 "id": 1,
