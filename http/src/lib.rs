@@ -149,7 +149,6 @@ type CoreReceiver = mpsc::UnboundedReceiver<CoreData>;
 pub struct HttpTransport {
     request_tx: CoreSender,
     id: Arc<AtomicUsize>,
-    timeout: Option<Duration>,
 }
 
 impl HttpTransport {
@@ -214,7 +213,6 @@ impl HttpTransport {
             request_tx: self.request_tx.clone(),
             uri,
             id: self.id.clone(),
-            timeout: self.timeout.clone(),
         })
     }
 }
@@ -222,21 +220,11 @@ impl HttpTransport {
 /// Builder type for `HttpTransport`.
 pub struct HttpTransportBuilder<C: ClientCreator> {
     client_creator: C,
-    timeout: Option<Duration>,
 }
 
 impl<C: ClientCreator> HttpTransportBuilder<C> {
     fn new(client_creator: C) -> Self {
-        HttpTransportBuilder {
-            client_creator,
-            timeout: None,
-        }
-    }
-
-    /// Configure the timeout for RPC requests.
-    pub fn timeout(mut self, duration: Duration) -> Self {
-        self.timeout = Some(duration);
-        self
+        HttpTransportBuilder { client_creator }
     }
 
     /// Creates the final `HttpTransport` backed by its own Tokio `Core` running in a separate
@@ -249,7 +237,7 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
                 tx.send(Err(e)).unwrap();
             }
             Ok((mut core, request_tx, future)) => {
-                tx.send(Ok(Self::build(request_tx, self.timeout))).unwrap();
+                tx.send(Ok(Self::build(request_tx))).unwrap();
                 if let Err(_) = core.run(future) {
                     error!("JSON-RPC processing thread had an error");
                 }
@@ -272,14 +260,13 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
             client,
             handle.clone(),
         ));
-        Ok(Self::build(request_tx, self.timeout))
+        Ok(Self::build(request_tx))
     }
 
-    fn build(request_tx: CoreSender, timeout: Option<Duration>) -> HttpTransport {
+    fn build(request_tx: CoreSender) -> HttpTransport {
         HttpTransport {
             request_tx,
             id: Arc::new(AtomicUsize::new(1)),
-            timeout,
         }
     }
 }
@@ -380,7 +367,6 @@ pub struct HttpHandle {
     request_tx: CoreSender,
     uri: Uri,
     id: Arc<AtomicUsize>,
-    timeout: Option<Duration>,
 }
 
 impl HttpHandle {
@@ -396,11 +382,6 @@ impl HttpHandle {
         request.set_body(body);
         request
     }
-
-    /// Configures the timeout for RPC calls.
-    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
-        self.timeout = timeout;
-    }
 }
 
 impl Transport for HttpHandle {
@@ -414,7 +395,6 @@ impl Transport for HttpHandle {
     fn send(&self, json_data: Vec<u8>, timeout: Option<Duration>) -> Self::Future {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
-        let timeout = timeout.or_else(|| self.timeout.clone());
         let request_task = (request, response_tx, timeout);
         let future = future::result(self.request_tx.unbounded_send(request_task))
             .map_err(|e| {
