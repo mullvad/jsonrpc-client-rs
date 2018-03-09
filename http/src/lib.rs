@@ -129,8 +129,9 @@ error_chain! {
 }
 
 
-type CoreSender = mpsc::UnboundedSender<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
-type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec<u8>>>)>;
+type CoreData = (Request, oneshot::Sender<Result<Vec<u8>>>, Option<Duration>);
+type CoreSender = mpsc::UnboundedSender<CoreData>;
+type CoreReceiver = mpsc::UnboundedReceiver<CoreData>;
 
 
 /// The main struct of the HTTP transport implementation for
@@ -148,6 +149,7 @@ type CoreReceiver = mpsc::UnboundedReceiver<(Request, oneshot::Sender<Result<Vec
 pub struct HttpTransport {
     request_tx: CoreSender,
     id: Arc<AtomicUsize>,
+    timeout: Option<Duration>,
 }
 
 impl HttpTransport {
@@ -212,6 +214,7 @@ impl HttpTransport {
             request_tx: self.request_tx.clone(),
             uri,
             id: self.id.clone(),
+            timeout: self.timeout.clone(),
         })
     }
 }
@@ -241,20 +244,18 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// existing event loop, use the [`shared`](#method.shared) method instead.
     pub fn standalone(self) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
-        thread::spawn(
-            move || match create_standalone_core(self.client_creator, self.timeout) {
-                Err(e) => {
-                    tx.send(Err(e)).unwrap();
+        thread::spawn(move || match create_standalone_core(self.client_creator) {
+            Err(e) => {
+                tx.send(Err(e)).unwrap();
+            }
+            Ok((mut core, request_tx, future)) => {
+                tx.send(Ok(Self::build(request_tx, self.timeout))).unwrap();
+                if let Err(_) = core.run(future) {
+                    error!("JSON-RPC processing thread had an error");
                 }
-                Ok((mut core, request_tx, future)) => {
-                    tx.send(Ok(Self::build(request_tx))).unwrap();
-                    if let Err(_) = core.run(future) {
-                        error!("JSON-RPC processing thread had an error");
-                    }
-                    debug!("Standalone HttpTransport thread exiting");
-                }
-            },
-        );
+                debug!("Standalone HttpTransport thread exiting");
+            }
+        });
 
         rx.recv().unwrap()
     }
@@ -269,16 +270,16 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         handle.spawn(create_request_processing_future(
             request_rx,
             client,
-            self.timeout,
             handle.clone(),
         ));
-        Ok(Self::build(request_tx))
+        Ok(Self::build(request_tx, self.timeout))
     }
 
-    fn build(request_tx: CoreSender) -> HttpTransport {
+    fn build(request_tx: CoreSender, timeout: Option<Duration>) -> HttpTransport {
         HttpTransport {
             request_tx,
             id: Arc::new(AtomicUsize::new(1)),
+            timeout,
         }
     }
 }
@@ -318,7 +319,6 @@ impl<T> Future for RequestTimeout<T> {
 /// Creates all the components needed to run the `HttpTransport` in standalone mode.
 fn create_standalone_core<C: ClientCreator>(
     client_creator: C,
-    timeout: Option<Duration>,
 ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
     let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
     let handle = core.handle();
@@ -326,7 +326,7 @@ fn create_standalone_core<C: ClientCreator>(
         .create(&handle)
         .chain_err(|| ErrorKind::ClientCreatorError)?;
     let (request_tx, request_rx) = mpsc::unbounded();
-    let future = create_request_processing_future(request_rx, client, timeout, handle);
+    let future = create_request_processing_future(request_rx, client, handle);
     Ok((core, request_tx, future))
 }
 
@@ -335,10 +335,9 @@ fn create_standalone_core<C: ClientCreator>(
 fn create_request_processing_future<CC: hyper::client::Connect>(
     request_rx: CoreReceiver,
     client: Client<CC, hyper::Body>,
-    timeout: Option<Duration>,
     handle: Handle,
 ) -> Box<Future<Item = (), Error = ()>> {
-    let f = request_rx.for_each(move |(request, response_tx)| {
+    let f = request_rx.for_each(move |(request, response_tx, timeout)| {
         trace!("Sending request to {}", request.uri());
         let request = client.request(request).from_err();
         let request_with_timeout: Box<
@@ -381,6 +380,7 @@ pub struct HttpHandle {
     request_tx: CoreSender,
     uri: Uri,
     id: Arc<AtomicUsize>,
+    timeout: Option<Duration>,
 }
 
 impl HttpHandle {
@@ -396,6 +396,11 @@ impl HttpHandle {
         request.set_body(body);
         request
     }
+
+    /// Configures the timeout for RPC calls.
+    pub fn set_timeout(&mut self, timeout: Option<Duration>) {
+        self.timeout = timeout;
+    }
 }
 
 impl Transport for HttpHandle {
@@ -409,7 +414,8 @@ impl Transport for HttpHandle {
     fn send(&self, json_data: Vec<u8>) -> Self::Future {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
-        let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
+        let request_task = (request, response_tx, self.timeout.clone());
+        let future = future::result(self.request_tx.unbounded_send(request_task))
             .map_err(|e| {
                 Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
             })

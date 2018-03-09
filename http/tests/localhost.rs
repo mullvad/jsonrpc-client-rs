@@ -28,7 +28,7 @@ use tokio_core::reactor::{Core, Timeout};
 
 
 macro_rules! assert_err {
-    ($error_chain1:ident, $error_chain2:ident) => {
+    ($error_chain1:expr, $error_chain2:expr) => {
         for (error1, error2) in $error_chain1.iter().zip($error_chain2.iter()) {
             assert_eq!(format!("{}", error1), format!("{}", error2));
         }
@@ -164,6 +164,50 @@ fn long_request_should_succeed_with_long_timeout() {
     let result = core.run(rpc_future).unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
+}
+
+#[test]
+fn transport_handles_can_have_different_timeouts() {
+    // Spawn a server hosting the `ServerApi` API.
+    let (_server, uri) = spawn_slow_server();
+    println!("Testing towards slow server at {}", uri);
+
+    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
+    let mut core = Core::new().unwrap();
+
+    // Create the HTTP transport handle and create a RPC client with that handle. Set the default
+    // timeout so that long requests succeed.
+    let transport = HttpTransport::new()
+        .timeout(Duration::from_secs(2))
+        .shared(&core.handle())
+        .unwrap();
+
+    // Perform a request using a handle that uses the default timeout.
+    let handle1 = transport.handle(&uri).unwrap();
+
+    let mut client1 = TestClient::new(handle1);
+    let rpc_future1 = client1.to_upper("HARD string TAKES too LONG").then(Ok);
+
+    // Perform a request using a handle configured with a shorter timeout.
+    let mut handle2 = transport.handle(&uri).unwrap();
+    handle2.set_timeout(Some(Duration::from_millis(500)));
+
+    let mut client2 = TestClient::new(handle2);
+    let rpc_future2 = client2.to_upper("HARD string TAKES too LONG").then(Ok);
+
+    let joined_future = rpc_future1.join(rpc_future2);
+    let results: Result<_, ()> = core.run(joined_future);
+    let (result1, result2) = results.unwrap();
+
+    let timeout_error =
+        jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
+    let expected_error = jsonrpc_client_core::Error::with_chain(
+        timeout_error,
+        jsonrpc_client_core::ErrorKind::TransportError,
+    );
+
+    assert_eq!(result1.unwrap(), "HARD STRING TAKES TOO LONG");
+    assert_err!(result2.unwrap_err(), expected_error);
 }
 
 
