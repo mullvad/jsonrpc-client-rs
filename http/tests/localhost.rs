@@ -18,40 +18,17 @@ extern crate jsonrpc_http_server;
 #[macro_use]
 extern crate jsonrpc_macros;
 
+#[macro_use]
+mod common;
+
 use futures::Future;
 use futures::future::Either;
 use jsonrpc_client_http::HttpTransport;
-use jsonrpc_core::{Error, IoHandler};
-use jsonrpc_http_server::ServerBuilder;
 use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
-
-macro_rules! assert_err {
-    ($error_chain1:ident, $error_chain2:ident) => {
-        for (error1, error2) in $error_chain1.iter().zip($error_chain2.iter()) {
-            assert_eq!(format!("{}", error1), format!("{}", error2));
-        }
-    }
-}
-
-
-// Generate server API trait. Actual implementation at bottom of file.
-build_rpc_trait! {
-    pub trait ServerApi {
-        #[rpc(name = "to_upper")]
-        fn to_upper(&self, String) -> Result<String, Error>;
-
-        #[rpc(name = "sleep")]
-        fn sleep(&self, u64) -> Result<(), Error>;
-    }
-}
-
-// Generate client struct with same API as server.
-jsonrpc_client!(pub struct TestClient {
-    pub fn to_upper(&mut self, string: &str) -> RpcRequest<String>;
-    pub fn sleep(&mut self, time: u64) -> RpcRequest<()>;
-});
+// Use a simple RPC API for testing purposes.
+use common::test_server::{Server, TestClient};
 
 
 #[test]
@@ -164,53 +141,6 @@ fn long_request_should_succeed_with_long_timeout() {
     let result = core.run(rpc_future).unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
-}
-
-
-/// Simple struct that will implement the RPC API defined at the top of this file.
-///
-/// Can be configured to delay its responses to simulate long operations.
-struct Server {
-    delay: Option<Duration>,
-}
-
-impl Server {
-    pub fn new() -> Self {
-        Server { delay: None }
-    }
-
-    pub fn with_delay(delay: Duration) -> Self {
-        Server { delay: Some(delay) }
-    }
-
-    pub fn spawn(self) -> jsonrpc_http_server::Server {
-        let mut io = IoHandler::new();
-        io.extend_with(self.to_delegate());
-
-        ServerBuilder::new(io)
-            .start_http(&"127.0.0.1:0".parse().unwrap())
-            .expect("failed to spawn server")
-    }
-
-    fn simulate_delay(&self) {
-        if let Some(delay) = self.delay {
-            ::std::thread::sleep(delay);
-        }
-    }
-}
-
-impl ServerApi for Server {
-    fn to_upper(&self, s: String) -> Result<String, Error> {
-        self.simulate_delay();
-        Ok(s.to_uppercase())
-    }
-
-    fn sleep(&self, time: u64) -> Result<(), Error> {
-        println!("Sleeping on server");
-        ::std::thread::sleep(Duration::from_secs(time));
-        self.simulate_delay();
-        Ok(())
-    }
 }
 
 fn spawn_server() -> (jsonrpc_http_server::Server, String) {
