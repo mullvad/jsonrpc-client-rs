@@ -1,0 +1,19 @@
+[package]
+name = "jsonrpc-client-ws"
+version = "0.2.0"
+authors = ["Mullvad VPN <admin@mullvad.net>", "Linus Färnstrand <linus@mullvad.net>"]
+description = "A Websocket transport implementation for jsonrpc-client-core"
+# readme = "README.md"
+keywords = ["jsonrpc", "rpc", "client", "ws", "websocket"]
+categories = ["network-programming", "web-programming", "web-programming::websocket"]
+repository = "https://github.com/mullvad/jsonrpc-client-rs"
+license = "MIT/Apache-2.0"
+
+[dependencies]
+websocket = "0.20"
+error-chain = "0.11"
+native-tls = "0.1"
+futures = "0.1.15"
+tokio-core = "0.1"
+
+jsonrpc-client-core = { version = "0.3", path = "../core" }
