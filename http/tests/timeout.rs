@@ -41,12 +41,12 @@ fn long_request_should_timeout() {
 
     // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransport::new()
-        .timeout(Duration::from_millis(500))
         .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
+    client.set_timeout(Some(Duration::from_millis(500)));
 
     let rpc_future = client.to_upper("HARD string TAKES too LONG");
     let error = core.run(rpc_future).unwrap_err();
@@ -72,12 +72,12 @@ fn long_request_should_succeed_with_long_timeout() {
 
     // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransport::new()
-        .timeout(Duration::from_secs(2))
         .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
+    client.set_timeout(Some(Duration::from_secs(2)));
 
     let rpc_future = client.to_upper("HARD string TAKES too LONG");
     let result = core.run(rpc_future).unwrap();
@@ -103,15 +103,16 @@ fn transport_handles_can_have_different_timeouts() {
 
     // Perform a request using a handle that uses the default timeout.
     let handle1 = transport.handle(&uri).unwrap();
-
     let mut client1 = TestClient::new(handle1);
+    client1.set_timeout(Some(Duration::from_secs(2)));
+
     let rpc_future1 = client1.to_upper("HARD string TAKES too LONG").then(Ok);
 
     // Perform a request using a handle configured with a shorter timeout.
-    let mut handle2 = transport.handle(&uri).unwrap();
-    handle2.set_timeout(Some(Duration::from_millis(500)));
-
+    let handle2 = transport.handle(&uri).unwrap();
     let mut client2 = TestClient::new(handle2);
+    client2.set_timeout(Some(Duration::from_millis(500)));
+
     let rpc_future2 = client2.to_upper("HARD string TAKES too LONG").then(Ok);
 
     let joined_future = rpc_future1.join(rpc_future2);

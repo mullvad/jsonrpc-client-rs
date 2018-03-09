@@ -21,12 +21,22 @@ macro_rules! jsonrpc_client {
         $(#[$struct_attr])*
         pub struct $struct_name<T: $crate::Transport> {
             transport: T,
+            timeout: Option<::std::time::Duration>,
         }
 
         impl<T: $crate::Transport> $struct_name<T> {
             /// Creates a new RPC client backed by the given transport implementation.
             pub fn new(transport: T) -> Self {
-                $struct_name { transport }
+                $struct_name {
+                    transport,
+                    timeout: None,
+                }
+            }
+
+            #[allow(dead_code)]
+            /// Configures the timeout for remote procedure calls.
+            pub fn set_timeout(&mut self, timeout: Option<::std::time::Duration>) {
+                self.timeout = timeout;
             }
 
             $(
@@ -36,7 +46,8 @@ macro_rules! jsonrpc_client {
                 {
                     let method = String::from(stringify!($method));
                     let params = expand_params!($($arg_name,)*);
-                    $crate::call_method(&mut $selff.transport, method, params)
+                    let timeout = $selff.timeout.clone();
+                    $crate::call_method(&mut $selff.transport, method, params, timeout)
                 }
             )*
         }

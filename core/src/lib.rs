@@ -216,6 +216,7 @@ pub fn call_method<T, P, R>(
     transport: &mut T,
     method: String,
     params: P,
+    timeout: Option<Duration>,
 ) -> RpcRequest<R, T::Future>
 where
     T: Transport,
@@ -229,7 +230,7 @@ where
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
-            let transport_future = transport.send(request_raw, None);
+            let transport_future = transport.send(request_raw, timeout);
             RpcRequest(Ok(InnerRpcRequest::new(transport_future, id)))
         }
     }
