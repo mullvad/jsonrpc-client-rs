@@ -96,10 +96,7 @@ fn transport_handles_can_have_different_timeouts() {
 
     // Create the HTTP transport handle and create a RPC client with that handle. Set the default
     // timeout so that long requests succeed.
-    let transport = HttpTransport::new()
-        .timeout(Duration::from_secs(2))
-        .shared(&core.handle())
-        .unwrap();
+    let transport = HttpTransport::new().shared(&core.handle()).unwrap();
 
     // Perform a request using a handle that uses the default timeout.
     let handle1 = transport.handle(&uri).unwrap();
