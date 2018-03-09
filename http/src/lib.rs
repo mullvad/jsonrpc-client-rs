@@ -83,7 +83,7 @@ use futures::{Future, IntoFuture, Poll, Stream};
 use futures::future::{self, Flatten, FutureResult};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
-use jsonrpc_client_core::Transport;
+use jsonrpc_client_core::{RpcRequestError, Transport};
 use std::io;
 use std::marker::PhantomData;
 use std::str::FromStr;
@@ -125,6 +125,15 @@ error_chain! {
     foreign_links {
         Hyper(hyper::Error) #[doc = "An error occured in Hyper."];
         Uri(hyper::error::UriError) #[doc = "The string given was not a valid URI."];
+    }
+}
+
+impl RpcRequestError for Error {
+    fn is_timeout(&self) -> bool {
+        match *self.kind() {
+            ErrorKind::RequestTimeout => true,
+            _ => false,
+        }
     }
 }
 

@@ -51,14 +51,14 @@ fn long_request_should_timeout() {
     let rpc_future = client.to_upper("HARD string TAKES too LONG");
     let error = core.run(rpc_future).unwrap_err();
 
-    let timeout_error =
+    let transport_error =
         jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
-    let expected_error = jsonrpc_client_core::Error::with_chain(
-        timeout_error,
-        jsonrpc_client_core::ErrorKind::TransportError,
+    let client_error = jsonrpc_client_core::Error::with_chain(
+        transport_error,
+        jsonrpc_client_core::ErrorKind::RequestTimeout,
     );
 
-    assert_err!(error, expected_error);
+    assert_err!(error, client_error);
 }
 
 #[test]
@@ -115,15 +115,15 @@ fn client_timeout_can_be_configured() {
     let results: Result<_, ()> = core.run(joined_future);
     let (result1, result2) = results.unwrap();
 
-    let timeout_error =
+    let transport_error =
         jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
-    let expected_error = jsonrpc_client_core::Error::with_chain(
-        timeout_error,
-        jsonrpc_client_core::ErrorKind::TransportError,
+    let client_error = jsonrpc_client_core::Error::with_chain(
+        transport_error,
+        jsonrpc_client_core::ErrorKind::RequestTimeout,
     );
 
     assert_eq!(result1.unwrap(), "HARD STRING TAKES TOO LONG");
-    assert_err!(result2.unwrap_err(), expected_error);
+    assert_err!(result2.unwrap_err(), client_error);
 }
 
 fn spawn_server() -> (jsonrpc_http_server::Server, String) {
