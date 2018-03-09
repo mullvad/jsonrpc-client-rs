@@ -27,6 +27,15 @@ use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
 
+macro_rules! assert_err {
+    ($error_chain1:ident, $error_chain2:ident) => {
+        for (error1, error2) in $error_chain1.iter().zip($error_chain2.iter()) {
+            assert_eq!(format!("{}", error1), format!("{}", error2));
+        }
+    }
+}
+
+
 // Generate server API trait. Actual implementation at bottom of file.
 build_rpc_trait! {
     pub trait ServerApi {
@@ -102,30 +111,116 @@ fn dropped_rpc_request_should_not_crash_transport() {
     }
 }
 
+#[test]
+fn long_request_should_timeout() {
+    // Spawn a server hosting the `ServerApi` API.
+    let (_server, uri) = spawn_slow_server();
+    println!("Testing towards slow server at {}", uri);
+
+    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
+    let mut core = Core::new().unwrap();
+
+    // Create the HTTP transport handle and create a RPC client with that handle.
+    let transport = HttpTransport::new()
+        .timeout(Duration::from_millis(500))
+        .shared(&core.handle())
+        .unwrap()
+        .handle(&uri)
+        .unwrap();
+    let mut client = TestClient::new(transport);
+
+    let rpc_future = client.to_upper("HARD string TAKES too LONG");
+    let error = core.run(rpc_future).unwrap_err();
+
+    let timeout_error =
+        jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
+    let expected_error = jsonrpc_client_core::Error::with_chain(
+        timeout_error,
+        jsonrpc_client_core::ErrorKind::TransportError,
+    );
+
+    assert_err!(error, expected_error);
+}
+
+#[test]
+fn long_request_should_succeed_with_long_timeout() {
+    // Spawn a server hosting the `ServerApi` API.
+    let (_server, uri) = spawn_slow_server();
+    println!("Testing towards slow server at {}", uri);
+
+    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
+    let mut core = Core::new().unwrap();
+
+    // Create the HTTP transport handle and create a RPC client with that handle.
+    let transport = HttpTransport::new()
+        .timeout(Duration::from_secs(2))
+        .shared(&core.handle())
+        .unwrap()
+        .handle(&uri)
+        .unwrap();
+    let mut client = TestClient::new(transport);
+
+    let rpc_future = client.to_upper("HARD string TAKES too LONG");
+    let result = core.run(rpc_future).unwrap();
+
+    assert_eq!("HARD STRING TAKES TOO LONG", result);
+}
+
 
 /// Simple struct that will implement the RPC API defined at the top of this file.
-struct Server;
+///
+/// Can be configured to delay its responses to simulate long operations.
+struct Server {
+    delay: Option<Duration>,
+}
+
+impl Server {
+    pub fn new() -> Self {
+        Server { delay: None }
+    }
+
+    pub fn with_delay(delay: Duration) -> Self {
+        Server { delay: Some(delay) }
+    }
+
+    pub fn spawn(self) -> jsonrpc_http_server::Server {
+        let mut io = IoHandler::new();
+        io.extend_with(self.to_delegate());
+
+        ServerBuilder::new(io)
+            .start_http(&"127.0.0.1:0".parse().unwrap())
+            .expect("failed to spawn server")
+    }
+
+    fn simulate_delay(&self) {
+        if let Some(delay) = self.delay {
+            ::std::thread::sleep(delay);
+        }
+    }
+}
 
 impl ServerApi for Server {
     fn to_upper(&self, s: String) -> Result<String, Error> {
+        self.simulate_delay();
         Ok(s.to_uppercase())
     }
 
     fn sleep(&self, time: u64) -> Result<(), Error> {
         println!("Sleeping on server");
         ::std::thread::sleep(Duration::from_secs(time));
+        self.simulate_delay();
         Ok(())
     }
 }
 
 fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = Server;
-    let mut io = IoHandler::new();
-    io.extend_with(server.to_delegate());
+    let server = Server::new().spawn();
+    let uri = format!("http://{}", server.address());
+    (server, uri)
+}
 
-    let server = ServerBuilder::new(io)
-        .start_http(&"127.0.0.1:0".parse().unwrap())
-        .unwrap();
+fn spawn_slow_server() -> (jsonrpc_http_server::Server, String) {
+    let server = Server::with_delay(Duration::from_secs(1)).spawn();
     let uri = format!("http://{}", server.address());
     (server, uri)
 }
