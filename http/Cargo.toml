@@ -28,6 +28,7 @@ tls = ["hyper-tls", "native-tls"]
 jsonrpc-core = "8.0"
 jsonrpc-macros = "8.0"
 jsonrpc-http-server = "8.0"
+tokio-service = "0.1"
 
 
 [badges]
