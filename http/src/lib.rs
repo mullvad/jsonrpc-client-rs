@@ -163,30 +163,6 @@ impl HttpTransport {
         HttpTransportBuilder::new(DefaultTlsClient)
     }
 
-    /// Returns a builder to create a `HttpTransport`, just like [`new`](#method.new), but with a
-    /// custom Hyper Client.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # extern crate jsonrpc_client_http;
-    /// # extern crate hyper;
-    /// # use std::io;
-    /// # use jsonrpc_client_http::{HttpTransport, Handle};
-    ///
-    /// # fn main() {
-    /// HttpTransport::with_client(|handle: &Handle| {
-    ///     Ok(hyper::Client::configure()
-    ///         .keep_alive(false)
-    ///         .build(handle)
-    ///     ) as Result<_, io::Error>
-    /// }).standalone().unwrap();
-    /// # }
-    /// ```
-    pub fn with_client<C: ClientCreator>(client_creator: C) -> HttpTransportBuilder<C> {
-        HttpTransportBuilder::new(client_creator)
-    }
-
     /// Returns a handle to this `HttpTransport` valid for a given URI.
     ///
     /// Used to create instances implementing `jsonrpc_client_core::Transport` for use with RPC
@@ -217,6 +193,35 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         HttpTransportBuilder {
             client_creator,
             timeout: None,
+        }
+    }
+
+    /// Changes the client to be used in `HttpTransport`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # extern crate jsonrpc_client_http;
+    /// # extern crate hyper;
+    /// # use std::io;
+    /// # use jsonrpc_client_http::{HttpTransport, Handle};
+    ///
+    /// # fn main() {
+    /// HttpTransport::new()
+    ///     .client(|handle: &Handle| {
+    ///         Ok(hyper::Client::configure()
+    ///             .keep_alive(false)
+    ///             .build(handle)
+    ///         ) as Result<_, io::Error>
+    ///     })
+    ///     .standalone()
+    ///     .unwrap();
+    /// # }
+    /// ```
+    pub fn client<NewC: ClientCreator>(self, client_creator: NewC) -> HttpTransportBuilder<NewC> {
+        HttpTransportBuilder {
+            client_creator,
+            timeout: self.timeout,
         }
     }
 
@@ -443,18 +448,22 @@ mod tests {
 
     #[test]
     fn new_custom_client() {
-        HttpTransport::with_client(|handle: &Handle| {
-            Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
-        }).standalone()
+        HttpTransport::new()
+            .client(|handle: &Handle| {
+                Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
+            })
+            .standalone()
             .unwrap();
     }
 
     #[test]
     fn failing_client_creator() {
-        let error = HttpTransport::with_client(|_: &Handle| {
-            Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
-                as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-        }).standalone()
+        let error = HttpTransport::new()
+            .client(|_: &Handle| {
+                Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
+                    as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+            })
+            .standalone()
             .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
