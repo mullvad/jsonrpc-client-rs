@@ -296,7 +296,7 @@ impl<F: Future> TimeLimited<F> {
     pub fn new(future: F, optional_time_limit: Option<Duration>, handle: &Handle) -> Self {
         match optional_time_limit {
             Some(time_limit) => Self::limited(future, time_limit, handle),
-            None => Self::unlimited(future),
+            None => TimeLimited::Unlimited(future),
         }
     }
 
@@ -308,13 +308,6 @@ impl<F: Future> TimeLimited<F> {
             Timeout::new(time_limit, handle).expect("failure to create Timeout for TimeLimited");
 
         TimeLimited::Limited(future.select2(timeout))
-    }
-
-    /// Create a new `TimeLimited` with no time limit.
-    ///
-    /// Will only complete when the given future completes.
-    pub fn unlimited(future: F) -> Self {
-        TimeLimited::Unlimited(future)
     }
 }
 
