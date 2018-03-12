@@ -109,10 +109,6 @@ error_chain! {
         RequestTimeout {
             description("Timeout while waiting for a request")
         }
-        /// When there was an error setting up a timeout.
-        TimeoutError {
-            description("Failed to configure a timeout")
-        }
         /// When there was an error in the Tokio Core.
         TokioCoreError(msg: &'static str) {
             description("Error with the Tokio Core")
@@ -321,7 +317,7 @@ impl<F: Future<Error = Error>> Future for TimeLimited<F> {
                 Ok(Async::Ready(Either::A((result, _)))) => Ok(Async::Ready(result)),
                 Ok(Async::Ready(Either::B(((), _)))) => Err(ErrorKind::RequestTimeout.into()),
                 Err(Either::A((error, _))) => Err(error),
-                Err(Either::B((error, _))) => Err(error).chain_err(|| ErrorKind::TimeoutError),
+                Err(Either::B((error, _))) => Err(error).chain_err(|| ErrorKind::RequestTimeout),
             },
         }
     }
