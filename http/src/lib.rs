@@ -66,7 +66,6 @@
 
 #[macro_use]
 extern crate error_chain;
-#[macro_use]
 extern crate futures;
 extern crate hyper;
 extern crate jsonrpc_client_core;
@@ -79,13 +78,11 @@ extern crate hyper_tls;
 #[cfg(feature = "tls")]
 extern crate native_tls;
 
-use futures::{Future, IntoFuture, Poll, Stream};
-use futures::future::{self, Flatten, FutureResult};
+use futures::{Async, Future, Poll, Stream};
+use futures::future::{self, Either, Select2};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
 use jsonrpc_client_core::Transport;
-use std::io;
-use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -280,35 +277,60 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     }
 }
 
-/// A Future that times out and returns an error with the kind RequestTimeout.
+/// Wraps a `Future` to give it a time limit to complete.
+///
+/// If the time is exceeded, a `RequestTimeout` error is returned.
 #[derive(Debug)]
-pub struct RequestTimeout<T> {
-    timeout_future: Flatten<FutureResult<Timeout, io::Error>>,
-    _item_type: PhantomData<T>,
+enum TimeLimitedFuture<F: Future> {
+    Limited(Select2<F, Timeout>),
+    Unlimited(F),
 }
 
-impl<T> RequestTimeout<T> {
-    /// Create a new `RequestTimeout`, ready to be used.
-    pub fn new(duration: Duration, handle: &Handle) -> Self {
-        RequestTimeout {
-            timeout_future: Timeout::new(duration, handle).into_future().flatten(),
-            _item_type: PhantomData,
+impl<F: Future> TimeLimitedFuture<F> {
+    /// Create a new `TimeLimitedFuture`.
+    ///
+    /// The duration parameter may be `None` to indicate there is no time limit. Otherwise it will
+    /// attempt to execute the given future before the specified time limit.
+    pub fn new(future: F, optional_time_limit: Option<Duration>, handle: &Handle) -> Self {
+        match optional_time_limit {
+            Some(time_limit) => Self::limited(future, time_limit, handle),
+            None => Self::unlimited(future),
         }
+    }
+
+    /// Create a new `TimeLimitedFuture` with a specified time limit.
+    ///
+    /// Will attempt to execute the given future before the specified time limit.
+    pub fn limited(future: F, time_limit: Duration, handle: &Handle) -> Self {
+        let timeout = Timeout::new(time_limit, handle)
+            .expect("failure to create Timeout for TimeLimitedFuture");
+
+        TimeLimitedFuture::Limited(future.select2(timeout))
+    }
+
+    /// Create a new `TimeLimitedFuture` with no time limit.
+    ///
+    /// Will only complete when the given future completes.
+    pub fn unlimited(future: F) -> Self {
+        TimeLimitedFuture::Unlimited(future)
     }
 }
 
-impl<T> Future for RequestTimeout<T> {
-    type Item = T;
+impl<F: Future<Error = Error>> Future for TimeLimitedFuture<F> {
+    type Item = F::Item;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        try_ready!(
-            self.timeout_future
-                .poll()
-                .chain_err(|| ErrorKind::TimeoutError)
-        );
-
-        Err(ErrorKind::RequestTimeout.into())
+        match *self {
+            TimeLimitedFuture::Unlimited(ref mut future) => future.poll(),
+            TimeLimitedFuture::Limited(ref mut future) => match future.poll() {
+                Ok(Async::NotReady) => Ok(Async::NotReady),
+                Ok(Async::Ready(Either::A((result, _)))) => Ok(Async::Ready(result)),
+                Ok(Async::Ready(Either::B(((), _)))) => Err(ErrorKind::RequestTimeout.into()),
+                Err(Either::A((error, _))) => Err(error),
+                Err(Either::B((error, _))) => Err(error).chain_err(|| ErrorKind::TimeoutError),
+            },
+        }
     }
 }
 
@@ -338,19 +360,8 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
     let f = request_rx.for_each(move |(request, response_tx)| {
         trace!("Sending request to {}", request.uri());
         let request = client.request(request).from_err();
-        let request_with_timeout: Box<
-            Future<Item = hyper::Response, Error = Error> + 'static,
-        > = match timeout {
-            Some(duration) => Box::new(
-                request
-                    .select(RequestTimeout::new(duration, &handle))
-                    .map(|(result, _)| result)
-                    .map_err(|(error, _)| error),
-            ),
-            None => Box::new(request),
-        };
 
-        request_with_timeout
+        TimeLimitedFuture::new(request, timeout, &handle)
             .and_then(|response: hyper::Response| {
                 if response.status() == hyper::StatusCode::Ok {
                     future::ok(response)
