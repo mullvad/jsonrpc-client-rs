@@ -39,27 +39,6 @@
 //! Here is a small example of how to use this crate together with `jsonrpc_core`:
 //!
 //! ```rust,no_run
-//! #[macro_use] extern crate jsonrpc_client_core;
-//! extern crate jsonrpc_client_http;
-//!
-//! use jsonrpc_client_http::HttpTransport;
-//!
-//! jsonrpc_client!(pub struct FizzBuzzClient {
-//!     /// Returns the fizz-buzz string for the given number.
-//!     pub fn fizz_buzz(&mut self, number: u64) -> RpcRequest<String>;
-//! });
-//!
-//! fn main() {
-//!     let transport = HttpTransport::new().unwrap();
-//!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
-//!     let mut client = FizzBuzzClient::new(transport_handle);
-//!     let result1 = client.fizz_buzz(3).call().unwrap();
-//!     let result2 = client.fizz_buzz(4).call().unwrap();
-//!     let result3 = client.fizz_buzz(5).call().unwrap();
-//!
-//!     // Should print "fizz 4 buzz" if the server implemented the service correctly
-//!     println!("{} {} {}", result1, result2, result3);
-//! }
 //! ```
 
 #![deny(missing_docs)]
@@ -81,6 +60,7 @@ extern crate native_tls;
 use futures::{future, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
+use hyper::header::{Header, Headers};
 use jsonrpc_client_core::Transport;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -264,6 +244,7 @@ impl HttpTransport {
             request_tx: self.request_tx.clone(),
             uri,
             id: self.id.clone(),
+            headers: Headers::new(),
         })
     }
 }
@@ -319,12 +300,23 @@ pub struct HttpHandle {
     request_tx: CoreSender,
     uri: Uri,
     id: Arc<AtomicUsize>,
+    headers: Headers,
 }
 
 impl HttpHandle {
+    /// Configure a custom HTTP header for the requests.
+    ///
+    /// The ContentType and ContentLength headers are set based on the request; attempting to
+    /// manually change them will cause them to be repeated.
+    pub fn set_header<H: Header>(&mut self, header: H) -> &mut Self {
+        self.headers.set(header);
+        self
+    }
+
     /// Creates a Hyper POST request with JSON content type and the given body data.
     fn create_request(&self, body: Vec<u8>) -> Request {
         let mut request = hyper::Request::new(hyper::Method::Post, self.uri.clone());
+        request.headers_mut().extend(self.headers.iter());
         request
             .headers_mut()
             .set(hyper::header::ContentType::json());
