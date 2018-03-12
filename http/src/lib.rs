@@ -283,13 +283,13 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
 ///
 /// If the time is exceeded, a `RequestTimeout` error is returned.
 #[derive(Debug)]
-enum TimeLimitedFuture<F: Future> {
+enum TimeLimited<F: Future> {
     Limited(Select2<F, Timeout>),
     Unlimited(F),
 }
 
-impl<F: Future> TimeLimitedFuture<F> {
-    /// Create a new `TimeLimitedFuture`.
+impl<F: Future> TimeLimited<F> {
+    /// Create a new `TimeLimited` future.
     ///
     /// The duration parameter may be `None` to indicate there is no time limit. Otherwise it will
     /// attempt to execute the given future before the specified time limit.
@@ -300,32 +300,32 @@ impl<F: Future> TimeLimitedFuture<F> {
         }
     }
 
-    /// Create a new `TimeLimitedFuture` with a specified time limit.
+    /// Create a new `TimeLimited` future with a specified time limit.
     ///
     /// Will attempt to execute the given future before the specified time limit.
     pub fn limited(future: F, time_limit: Duration, handle: &Handle) -> Self {
-        let timeout = Timeout::new(time_limit, handle)
-            .expect("failure to create Timeout for TimeLimitedFuture");
+        let timeout =
+            Timeout::new(time_limit, handle).expect("failure to create Timeout for TimeLimited");
 
-        TimeLimitedFuture::Limited(future.select2(timeout))
+        TimeLimited::Limited(future.select2(timeout))
     }
 
-    /// Create a new `TimeLimitedFuture` with no time limit.
+    /// Create a new `TimeLimited` with no time limit.
     ///
     /// Will only complete when the given future completes.
     pub fn unlimited(future: F) -> Self {
-        TimeLimitedFuture::Unlimited(future)
+        TimeLimited::Unlimited(future)
     }
 }
 
-impl<F: Future<Error = Error>> Future for TimeLimitedFuture<F> {
+impl<F: Future<Error = Error>> Future for TimeLimited<F> {
     type Item = F::Item;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match *self {
-            TimeLimitedFuture::Unlimited(ref mut future) => future.poll(),
-            TimeLimitedFuture::Limited(ref mut future) => match future.poll() {
+            TimeLimited::Unlimited(ref mut future) => future.poll(),
+            TimeLimited::Limited(ref mut future) => match future.poll() {
                 Ok(Async::NotReady) => Ok(Async::NotReady),
                 Ok(Async::Ready(Either::A((result, _)))) => Ok(Async::Ready(result)),
                 Ok(Async::Ready(Either::B(((), _)))) => Err(ErrorKind::RequestTimeout.into()),
@@ -363,7 +363,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
         trace!("Sending request to {}", request.uri());
         let request = client.request(request).from_err();
 
-        TimeLimitedFuture::new(request, timeout, &handle)
+        TimeLimited::new(request, timeout, &handle)
             .and_then(|response: hyper::Response| {
                 if response.status() == hyper::StatusCode::Ok {
                     future::ok(response)
