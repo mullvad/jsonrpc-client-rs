@@ -153,11 +153,7 @@ pub struct HttpTransport {
 
 impl HttpTransport {
     #[cfg(not(feature = "tls"))]
-    /// Starts the creation of a `HttpTransport`, which can be finished by the
-    /// [`standalone()`](struct.HttpTransportBuilder.html#method.standalone) method, where it is
-    /// backed by its own Tokio `Core` running in a separate thread, or by the
-    /// [`shared(handle)`](struct.HttpTransportBuilder.html#method.shared) method, where it is
-    /// backed by the Tokio `Handle` given to it.
+    /// Returns a builder to create a `HttpTransport`.
     ///
     /// The final transport that is created will not support https. Either compile the crate with
     /// the "tls" feature to get that functionality, or provide a custom Hyper client via the
@@ -167,11 +163,7 @@ impl HttpTransport {
     }
 
     #[cfg(feature = "tls")]
-    /// Starts the creation of a `HttpTransport`, which can be finished by the
-    /// [`standalone()`](struct.HttpTransportBuilder.html#method.standalone) method, where it is
-    /// backed by its own Tokio `Core` running in a separate thread, or by the
-    /// [`shared(handle)`](struct.HttpTransportBuilder.html#method.shared) method, where it is
-    /// backed by the Tokio `Handle` given to it.
+    /// Returns a builder to create a `HttpTransport`.
     ///
     /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
     /// supports both http and https connections.
@@ -179,8 +171,8 @@ impl HttpTransport {
         HttpTransportBuilder::new(DefaultTlsClient)
     }
 
-    /// Starts the creation of a `HttpTransport`, just like [`new`](#method.new), but with a custom
-    /// Hyper Client.
+    /// Returns a builder to create a `HttpTransport`, just like [`new`](#method.new), but with a
+    /// custom Hyper Client.
     ///
     /// # Example
     ///
@@ -219,6 +211,11 @@ impl HttpTransport {
 }
 
 /// Builder type for `HttpTransport`.
+///
+/// Can be finished by the [`standalone()`](struct.HttpTransportBuilder.html#method.standalone)
+/// method, where it is backed by its own Tokio `Core` running in a separate thread, or by the
+/// [`shared(handle)`](struct.HttpTransportBuilder.html#method.shared) method, where it is backed by
+/// the Tokio `Handle` given to it.
 pub struct HttpTransportBuilder<C: ClientCreator> {
     client_creator: C,
     timeout: Option<Duration>,
