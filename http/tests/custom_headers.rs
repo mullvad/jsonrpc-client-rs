@@ -5,7 +5,7 @@ extern crate jsonrpc_client_http;
 extern crate tokio_core;
 extern crate tokio_service;
 
-use std::{io, mem, thread};
+use std::{io, thread};
 use std::sync::{Arc, Mutex};
 
 use futures::future::{Future, FutureResult, IntoFuture};
@@ -121,8 +121,8 @@ where
     let mut reactor = Core::new().unwrap();
     let send_and_check = transport_handle
         .send(Vec::new())
-        .map_err(mem::drop)
-        .and_then(|_| rx.map_err(mem::drop));
+        .map_err(|_| ())
+        .and_then(|_| rx.map_err(|_| ()));
     let check_passed = reactor.run(send_and_check).unwrap();
 
     assert!(check_passed);
@@ -208,7 +208,7 @@ where
         let port = server.local_addr().unwrap().port();
 
         started_tx.send(port).unwrap();
-        server.run_until(shutdown_rx.map_err(mem::drop)).unwrap();
+        server.run_until(shutdown_rx.map_err(|_| ())).unwrap();
     });
 
     let server_shutdown_flag = ServerShutdownFlag(Some(shutdown_tx));
