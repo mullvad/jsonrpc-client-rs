@@ -325,10 +325,10 @@ pub struct HttpHandle {
 }
 
 impl HttpHandle {
-    /// Configure a custom HTTP header for the requests.
+    /// Configure a custom HTTP header for all requests sent through this transport.
     ///
-    /// The ContentType and ContentLength headers are initially set based on the request, but can
-    /// be manually changed.
+    /// Replaces any header set by this library or by Hyper, such as the ContentType, ContentLength
+    /// and Host headers.
     pub fn set_header<H: Header>(&mut self, header: H) -> &mut Self {
         self.headers.set(header);
         self
