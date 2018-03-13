@@ -120,10 +120,12 @@ where
         tx.send(test_result).unwrap();
     });
 
-    let send = transport_handle.send(Vec::new()).map_err(mem::drop);
-    let future = send.and_then(|_| rx.map_err(mem::drop));
+    let send_and_check = transport_handle
+        .send(Vec::new())
+        .map_err(mem::drop)
+        .and_then(|_| rx.map_err(mem::drop));
     let mut reactor = Core::new().unwrap();
-    let result = reactor.run(future).unwrap();
+    let result = reactor.run(send_and_check).unwrap();
 
     assert_eq!(result, true);
 }
