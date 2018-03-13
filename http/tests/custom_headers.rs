@@ -104,7 +104,7 @@ fn set_content_length() {
 fn test_custom_headers<S, C>(port: u16, set_headers: S, check_headers: C)
 where
     S: FnOnce(&mut HttpHandle),
-    C: 'static + FnOnce(&Headers) -> bool + Send,
+    C: FnOnce(&Headers) -> bool + Send + 'static,
 {
     let (tx, rx) = oneshot::channel();
 
@@ -196,7 +196,7 @@ impl<S: Service> NewService for OneNewService<S> {
 
 fn spawn_server<F>(port: u16, check: F) -> ServerShutdownFlag
 where
-    F: 'static + FnOnce(Request) + Send,
+    F: FnOnce(Request) + Send + 'static,
 {
     let (tx, rx) = oneshot::channel();
 
