@@ -337,13 +337,13 @@ impl HttpHandle {
     /// Creates a Hyper POST request with JSON content type and the given body data.
     fn create_request(&self, body: Vec<u8>) -> Request {
         let mut request = hyper::Request::new(hyper::Method::Post, self.uri.clone());
-        request.headers_mut().extend(self.headers.iter());
         request
             .headers_mut()
             .set(hyper::header::ContentType::json());
         request
             .headers_mut()
             .set(hyper::header::ContentLength(body.len() as u64));
+        request.headers_mut().extend(self.headers.iter());
         request.set_body(body);
         request
     }
