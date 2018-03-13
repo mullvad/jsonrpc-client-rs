@@ -6,9 +6,7 @@ extern crate tokio_core;
 extern crate tokio_service;
 
 use std::{io, mem, thread};
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot::{self, Sender};
@@ -38,7 +36,7 @@ fn set_host_header() {
         }
     };
 
-    test_custom_headers(3000, set, check);
+    test_custom_headers(set, check);
 }
 
 #[test]
@@ -59,7 +57,7 @@ fn set_host_header_twice() {
         }
     };
 
-    test_custom_headers(3001, set, check);
+    test_custom_headers(set, check);
 }
 
 #[test]
@@ -79,7 +77,7 @@ fn set_content_type() {
         }
     };
 
-    test_custom_headers(3002, set, check);
+    test_custom_headers(set, check);
 }
 
 #[test]
@@ -98,27 +96,27 @@ fn set_content_length() {
         }
     };
 
-    test_custom_headers(3003, set, check);
+    test_custom_headers(set, check);
 }
 
-fn test_custom_headers<S, C>(port: u16, set_headers: S, check_headers: C)
+fn test_custom_headers<S, C>(set_headers: S, check_headers: C)
 where
     S: FnOnce(&mut HttpHandle),
     C: FnOnce(&Headers) -> bool + Send + 'static,
 {
     let (tx, rx) = oneshot::channel();
 
+    let (_server, port) = spawn_server(move |request| {
+        let test_result = check_headers(request.headers());
+
+        tx.send(test_result).unwrap();
+    });
+
     let transport = HttpTransport::new().unwrap();
     let uri = format!("http://localhost:{}", port);
     let mut transport_handle = transport.handle(&uri).unwrap();
 
     set_headers(&mut transport_handle);
-
-    let _server = spawn_server(port, move |request| {
-        let test_result = check_headers(request.headers());
-
-        tx.send(test_result).unwrap();
-    });
 
     let mut reactor = Core::new().unwrap();
     let send_and_check = transport_handle
@@ -194,23 +192,27 @@ impl<S: Service> NewService for OneNewService<S> {
     }
 }
 
-fn spawn_server<F>(port: u16, check: F) -> ServerShutdownFlag
+fn spawn_server<F>(check: F) -> (ServerShutdownFlag, u16)
 where
     F: FnOnce(Request) + Send + 'static,
 {
-    let (tx, rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let (started_tx, started_rx) = oneshot::channel();
 
     thread::spawn(move || {
         let service = CheckService::new(check);
-        let address = SocketAddr::new("127.0.0.1".parse().unwrap(), port);
+        let address = "127.0.0.1:0".parse().unwrap();
         let server = Http::new()
             .bind(&address, OneNewService::new(service))
             .unwrap();
+        let port = server.local_addr().unwrap().port();
 
-        server.run_until(rx.map_err(mem::drop)).unwrap();
+        started_tx.send(port).unwrap();
+        server.run_until(shutdown_rx.map_err(mem::drop)).unwrap();
     });
 
-    thread::sleep(Duration::from_millis(100));
+    let server_shutdown_flag = ServerShutdownFlag(Some(shutdown_tx));
+    let server_port = started_rx.wait().unwrap();
 
-    ServerShutdownFlag(Some(tx))
+    (server_shutdown_flag, server_port)
 }
