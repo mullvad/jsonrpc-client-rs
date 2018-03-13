@@ -120,14 +120,14 @@ where
         tx.send(test_result).unwrap();
     });
 
+    let mut reactor = Core::new().unwrap();
     let send_and_check = transport_handle
         .send(Vec::new())
         .map_err(mem::drop)
         .and_then(|_| rx.map_err(mem::drop));
-    let mut reactor = Core::new().unwrap();
-    let result = reactor.run(send_and_check).unwrap();
+    let check_passed = reactor.run(send_and_check).unwrap();
 
-    assert_eq!(result, true);
+    assert!(check_passed);
 }
 
 pub struct CheckService<F> {
