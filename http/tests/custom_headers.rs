@@ -121,8 +121,8 @@ where
     let mut reactor = Core::new().unwrap();
     let send_and_check = transport_handle
         .send(Vec::new())
-        .map_err(|_| ())
-        .and_then(|_| rx.map_err(|_| ()));
+        .map_err(|err| err.to_string())
+        .and_then(|_| rx.map_err(|err| err.to_string()));
     let check_passed = reactor.run(send_and_check).unwrap();
 
     assert!(check_passed);
