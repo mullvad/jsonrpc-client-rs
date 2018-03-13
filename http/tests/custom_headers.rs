@@ -101,9 +101,9 @@ fn set_content_length() {
     test_custom_headers(3003, set, check);
 }
 
-fn test_custom_headers<H, C>(port: u16, set_headers: H, check_headers: C)
+fn test_custom_headers<S, C>(port: u16, set_headers: S, check_headers: C)
 where
-    H: FnOnce(&mut HttpHandle),
+    S: FnOnce(&mut HttpHandle),
     C: 'static + FnOnce(&Headers) -> bool + Send,
 {
     let (tx, rx) = oneshot::channel();
