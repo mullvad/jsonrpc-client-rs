@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot::{self, Sender};
 use hyper::{Headers, Request, Response, StatusCode};
-use hyper::header::{ContentType, Host};
+use hyper::header::{ContentLength, ContentType, Host};
 use hyper::server::Http;
 use tokio_core::reactor::Core;
 use tokio_service::{NewService, Service};
@@ -64,19 +64,41 @@ fn set_host_header_twice() {
 
 #[test]
 fn set_content_type() {
+    let content_type = ContentType::xml();
+    let expected_content_type = content_type.clone();
+
     let set = move |transport: &mut HttpHandle| {
-        transport.set_header(ContentType::xml());
+        transport.set_header(content_type);
     };
 
     let check = move |headers: &Headers| {
         if let Some(content_type) = headers.get::<ContentType>() {
-            *content_type == ContentType::json()
+            *content_type == expected_content_type
         } else {
             false
         }
     };
 
     test_custom_headers(3002, set, check);
+}
+
+#[test]
+fn set_content_length() {
+    let fake_content_length = ContentLength(100);
+
+    let set = move |transport: &mut HttpHandle| {
+        transport.set_header(fake_content_length);
+    };
+
+    let check = move |headers: &Headers| {
+        if let Some(content_length) = headers.get::<ContentLength>() {
+            *content_length == fake_content_length
+        } else {
+            false
+        }
+    };
+
+    test_custom_headers(3003, set, check);
 }
 
 fn test_custom_headers<H, C>(port: u16, set_headers: H, check_headers: C)

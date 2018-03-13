@@ -327,8 +327,8 @@ pub struct HttpHandle {
 impl HttpHandle {
     /// Configure a custom HTTP header for the requests.
     ///
-    /// The ContentType and ContentLength headers are set based on the request; attempting to
-    /// manually change them will cause them to be repeated.
+    /// The ContentType and ContentLength headers are initially set based on the request, but can
+    /// be manually changed.
     pub fn set_header<H: Header>(&mut self, header: H) -> &mut Self {
         self.headers.set(header);
         self
@@ -337,13 +337,13 @@ impl HttpHandle {
     /// Creates a Hyper POST request with JSON content type and the given body data.
     fn create_request(&self, body: Vec<u8>) -> Request {
         let mut request = hyper::Request::new(hyper::Method::Post, self.uri.clone());
-        request.headers_mut().extend(self.headers.iter());
         request
             .headers_mut()
             .set(hyper::header::ContentType::json());
         request
             .headers_mut()
             .set(hyper::header::ContentLength(body.len() as u64));
+        request.headers_mut().extend(self.headers.iter());
         request.set_body(body);
         request
     }
