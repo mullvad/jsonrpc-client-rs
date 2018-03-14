@@ -162,8 +162,6 @@ where
     }
 }
 
-pub struct ServerShutdownFlag(Option<Sender<()>>);
-
 pub struct OneNewService<S>(Arc<Mutex<Option<S>>>);
 
 impl<S: Service> OneNewService<S> {
@@ -187,7 +185,9 @@ impl<S: Service> NewService for OneNewService<S> {
     }
 }
 
-fn spawn_server<F>(check: F) -> (ServerShutdownFlag, u16)
+pub struct ServerHandle(Option<Sender<()>>);
+
+fn spawn_server<F>(check: F) -> (ServerHandle, u16)
 where
     F: FnOnce(Request) + Send + 'static,
 {
@@ -206,8 +206,8 @@ where
         server.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
     });
 
-    let server_shutdown_flag = ServerShutdownFlag(Some(shutdown_tx));
+    let server_handle = ServerHandle(Some(shutdown_tx));
     let server_port = started_rx.wait().unwrap();
 
-    (server_shutdown_flag, server_port)
+    (server_handle, server_port)
 }
