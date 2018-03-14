@@ -5,17 +5,18 @@ extern crate jsonrpc_client_http;
 extern crate tokio_core;
 extern crate tokio_service;
 
-use std::{io, thread};
 use std::fmt::Display;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::thread;
 
+use futures::Stream;
 use futures::future::{Future, FutureResult, IntoFuture};
-use futures::sync::oneshot::{self, Sender};
+use futures::sync::{mpsc, oneshot};
 use hyper::{Headers, Request, Response, StatusCode};
 use hyper::header::{ContentLength, ContentType, Header, Host};
 use hyper::server::Http;
 use tokio_core::reactor::Core;
-use tokio_service::{NewService, Service};
+use tokio_service::Service;
 
 use jsonrpc_client_core::Transport;
 use jsonrpc_client_http::{HttpHandle, HttpTransport};
@@ -103,15 +104,15 @@ fn set_content_length() {
 fn test_custom_headers<S, C>(set_headers: S, check_headers: C)
 where
     S: FnOnce(&mut HttpHandle),
-    C: FnOnce(&Headers) -> bool + Send + 'static,
+    C: Fn(&Headers) -> bool + Send + Sync + 'static,
 {
-    let (tx, rx) = oneshot::channel();
+    let (check_service, check_results) = CheckService::new(check_headers);
+    let check_result = check_results
+        .into_future()
+        .map(|(result, _)| result.unwrap_or(false))
+        .map_err(|_| "failure to receive test result from other thread".to_string());
 
-    let (_server, port) = spawn_server(move |request| {
-        let test_result = check_headers(request.headers());
-
-        tx.send(test_result).unwrap();
-    });
+    let (_server, port) = spawn_server(check_service);
 
     let transport = HttpTransport::new().unwrap();
     let uri = format!("http://127.0.0.1:{}", port);
@@ -123,30 +124,51 @@ where
     let send_and_check = transport_handle
         .send(Vec::new())
         .map_err(|err| err.to_string())
-        .and_then(|_| rx.map_err(|err| err.to_string()));
+        .and_then(|_| check_result);
     let check_passed = reactor.run(send_and_check).unwrap();
 
     assert!(check_passed);
 }
 
-pub struct CheckService<F> {
-    check: Arc<Mutex<Option<F>>>,
+pub struct CheckService<F>
+where
+    F: Fn(&Headers) -> bool,
+{
+    check: Arc<F>,
+    sender: mpsc::Sender<bool>,
 }
 
 impl<F> CheckService<F>
 where
-    F: FnOnce(Request),
+    F: Fn(&Headers) -> bool,
 {
-    pub fn new(check: F) -> Self {
+    pub fn new(check: F) -> (Self, mpsc::Receiver<bool>) {
+        let (sender, receiver) = mpsc::channel(0);
+
+        let check_service = CheckService {
+            check: Arc::new(check),
+            sender,
+        };
+
+        (check_service, receiver)
+    }
+}
+
+impl<F> Clone for CheckService<F>
+where
+    F: Fn(&Headers) -> bool,
+{
+    fn clone(&self) -> Self {
         CheckService {
-            check: Arc::new(Mutex::new(Some(check))),
+            check: self.check.clone(),
+            sender: self.sender.clone(),
         }
     }
 }
 
 impl<F> Service for CheckService<F>
 where
-    F: FnOnce(Request),
+    F: Fn(&Headers) -> bool,
 {
     type Request = Request;
     type Response = Response;
@@ -154,51 +176,26 @@ where
     type Future = FutureResult<Self::Response, Self::Error>;
 
     fn call(&self, request: Request) -> Self::Future {
-        let check = self.check.lock().unwrap().take().unwrap();
-
-        check(request);
+        let mut sender = self.sender.clone();
+        let _ = sender.try_send((self.check)(request.headers()));
 
         Ok(Response::new().with_status(StatusCode::Ok)).into_future()
     }
 }
 
-pub struct OneNewService<S>(Arc<Mutex<Option<S>>>);
+pub struct ServerHandle(Option<oneshot::Sender<()>>);
 
-impl<S: Service> OneNewService<S> {
-    pub fn new(service: S) -> Self {
-        OneNewService(Arc::new(Mutex::new(Some(service))))
-    }
-}
-
-impl<S: Service> NewService for OneNewService<S> {
-    type Request = S::Request;
-    type Response = S::Response;
-    type Error = S::Error;
-    type Instance = S;
-
-    fn new_service(&self) -> io::Result<Self::Instance> {
-        self.0
-            .lock()
-            .unwrap()
-            .take()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "service already created"))
-    }
-}
-
-pub struct ServerHandle(Option<Sender<()>>);
-
-fn spawn_server<F>(check: F) -> (ServerHandle, u16)
+fn spawn_server<F>(service: CheckService<F>) -> (ServerHandle, u16)
 where
-    F: FnOnce(Request) + Send + 'static,
+    F: Fn(&Headers) -> bool + Send + Sync + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (started_tx, started_rx) = oneshot::channel();
 
     thread::spawn(move || {
-        let service = CheckService::new(check);
         let address = "127.0.0.1:0".parse().unwrap();
         let server = Http::new()
-            .bind(&address, OneNewService::new(service))
+            .bind(&address, move || Ok(service.clone()))
             .unwrap();
         let port = server.local_addr().unwrap().port();
 
