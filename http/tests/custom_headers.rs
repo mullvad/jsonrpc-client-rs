@@ -5,15 +5,14 @@ extern crate jsonrpc_client_http;
 extern crate tokio_core;
 extern crate tokio_service;
 
-use std::fmt::Display;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot;
-use hyper::{Headers, Request, Response, StatusCode};
-use hyper::header::{ContentLength, ContentType, Header, Host};
+use hyper::{Request, Response, StatusCode};
+use hyper::header::{ContentLength, ContentType, Host};
 use hyper::server::Http;
 use tokio_core::reactor::Core;
 use tokio_service::Service;
@@ -30,14 +29,10 @@ fn set_host_header() {
         transport.set_header(Host::new(hostname, port));
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(host) = headers.get::<Host>() {
-            assert_eq!(host.hostname(), hostname);
-            assert_eq!(host.port(), port);
-        }
-    };
-
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let host = request.headers().get::<Host>().expect("No Host");
+    assert_eq!(host.hostname(), hostname);
+    assert_eq!(host.port(), port);
 }
 
 #[test]
@@ -50,14 +45,11 @@ fn set_host_header_twice() {
         transport.set_header(Host::new(hostname, port));
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(host) = headers.get::<Host>() {
-            assert_eq!(host.hostname(), hostname);
-            assert_eq!(host.port(), port);
-        }
-    };
 
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let host = request.headers().get::<Host>().expect("No Host");
+    assert_eq!(host.hostname(), hostname);
+    assert_eq!(host.port(), port);
 }
 
 #[test]
@@ -69,13 +61,13 @@ fn set_content_type() {
         transport.set_header(content_type);
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(content_type) = headers.get::<ContentType>() {
-            assert_eq!(*content_type, expected_content_type);
-        }
-    };
 
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let content_type = request
+        .headers()
+        .get::<ContentType>()
+        .expect("No ContentType");
+    assert_eq!(*content_type, expected_content_type);
 }
 
 #[test]
@@ -86,19 +78,17 @@ fn set_content_length() {
         transport.set_header(fake_content_length);
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(content_length) = headers.get::<ContentLength>() {
-            assert_eq!(*content_length, fake_content_length);
-        }
-    };
-
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let content_length = request
+        .headers()
+        .get::<ContentLength>()
+        .expect("No ContentLength");
+    assert_eq!(*content_length, fake_content_length);
 }
 
-fn test_custom_headers<S, C>(set_headers: S, check_headers: C)
+fn test_custom_headers<S>(set_headers: S) -> Request
 where
     S: FnOnce(&mut HttpHandle),
-    C: Fn(&Headers) + Send + Sync + 'static,
 {
     let (mock_service, requests) = ForwardToChannel::new();
     let (_server, port) = spawn_server(mock_service);
@@ -111,12 +101,12 @@ where
 
     let mut reactor = Core::new().unwrap();
     let send = transport_handle.send(Vec::new());
-
     reactor.run(send).unwrap();
 
-    let request = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-
-    check_headers(request.headers());
+    server
+        .requests
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
 }
 
 #[derive(Clone)]
