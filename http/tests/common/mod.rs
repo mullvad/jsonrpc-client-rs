@@ -10,15 +10,18 @@ macro_rules! assert_error_chain_message {
     };
 
     (
-        $error_chain1:expr,
+        $result:expr,
         $error_package:ident :: $error_kind:ident
         $( -> $error_packages:ident :: $error_kinds:ident )*
     ) => {
+        assert!($result.is_err(), "expected an error, but got Ok(_)");
+
+        let actual_error = $result.unwrap_err();
         let root_cause = $error_package::Error::from($error_package::ErrorKind::$error_kind);
 
         assert_error_chain_message! {
             @building
-            $error_chain1,
+            actual_error,
             root_cause,
             -> $error_package::$error_kind $( -> $error_packages::$error_kinds )*
         };
