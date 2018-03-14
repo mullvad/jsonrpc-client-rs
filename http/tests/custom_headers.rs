@@ -183,7 +183,7 @@ where
     }
 }
 
-pub struct ServerHandle(Option<oneshot::Sender<()>>);
+pub struct ServerHandle(oneshot::Sender<()>);
 
 fn spawn_server<F>(service: CheckService<F>) -> (ServerHandle, u16)
 where
@@ -203,7 +203,7 @@ where
         server.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
     });
 
-    let server_handle = ServerHandle(Some(shutdown_tx));
+    let server_handle = ServerHandle(shutdown_tx);
     let server_port = started_rx.wait().unwrap();
 
     (server_handle, server_port)
