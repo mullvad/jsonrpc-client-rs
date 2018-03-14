@@ -21,9 +21,9 @@ extern crate jsonrpc_macros;
 #[macro_use]
 mod common;
 
+use futures::Future;
 use jsonrpc_client_http::HttpTransport;
 use std::time::Duration;
-use tokio_core::reactor::Core;
 
 // Use a simple RPC API for testing purposes.
 use common::{MockRpcClient, MockRpcServer};
@@ -32,60 +32,40 @@ use common::{MockRpcClient, MockRpcServer};
 #[test]
 fn long_request_should_timeout() {
     // Spawn a server hosting the `MockRpcServerApi` API.
-    let (_server, uri) = spawn_server();
+    let server = MockRpcServer::spawn();
+    let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
-
-    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
-    let mut core = Core::new().unwrap();
 
     // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransport::new()
-        .timeout(Duration::from_millis(500))
-        .shared(&core.handle())
+        .timeout(Duration::from_millis(50))
+        .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = MockRpcClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1000);
-    let error = core.run(rpc_future).unwrap_err();
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 10_000);
+    let result = rpc_future.wait();
 
-    let timeout_error =
-        jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
-    let expected_error = jsonrpc_client_core::Error::with_chain(
-        timeout_error,
-        jsonrpc_client_core::ErrorKind::TransportError,
-    );
-
-    assert_err!(error, expected_error);
+    assert!(result.is_err());
 }
 
 #[test]
-fn long_request_should_succeed_with_long_timeout() {
-    // Spawn a server hosting the `MockRpcServerApi` API.
-    let (_server, uri) = spawn_server();
-    println!("Testing towards slow server at {}", uri);
+fn short_request_should_succeed() {
+    let server = MockRpcServer::spawn();
+    let uri = format!("http://{}", server.address());
 
-    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
-    let mut core = Core::new().unwrap();
-
-    // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransport::new()
-        .timeout(Duration::from_secs(2))
-        .shared(&core.handle())
+        .timeout(Duration::from_secs(10))
+        .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = MockRpcClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1000);
-    let result = core.run(rpc_future).unwrap();
+    let rpc_future = client.to_upper("FAST sHoRt strIng");
+    let result = rpc_future.wait().unwrap();
 
-    assert_eq!("HARD STRING TAKES TOO LONG", result);
-}
-
-fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = MockRpcServer::spawn();
-    let uri = format!("http://{}", server.address());
-    (server, uri)
+    assert_eq!("FAST SHORT STRING", result);
 }
