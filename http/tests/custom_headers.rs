@@ -6,12 +6,13 @@ extern crate tokio_core;
 extern crate tokio_service;
 
 use std::{io, thread};
+use std::fmt::Display;
 use std::sync::{Arc, Mutex};
 
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot::{self, Sender};
 use hyper::{Headers, Request, Response, StatusCode};
-use hyper::header::{ContentLength, ContentType, Host};
+use hyper::header::{ContentLength, ContentType, Header, Host};
 use hyper::server::Http;
 use tokio_core::reactor::Core;
 use tokio_service::{NewService, Service};
@@ -163,12 +164,6 @@ where
 
 pub struct ServerShutdownFlag(Option<Sender<()>>);
 
-impl Drop for ServerShutdownFlag {
-    fn drop(&mut self) {
-        self.0.take().unwrap().send(()).unwrap();
-    }
-}
-
 pub struct OneNewService<S>(Arc<Mutex<Option<S>>>);
 
 impl<S: Service> OneNewService<S> {
@@ -208,7 +203,7 @@ where
         let port = server.local_addr().unwrap().port();
 
         started_tx.send(port).unwrap();
-        server.run_until(shutdown_rx.map_err(|_| ())).unwrap();
+        server.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
     });
 
     let server_shutdown_flag = ServerShutdownFlag(Some(shutdown_tx));
