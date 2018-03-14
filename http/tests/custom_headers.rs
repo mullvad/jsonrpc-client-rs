@@ -6,7 +6,6 @@ extern crate tokio_core;
 extern crate tokio_service;
 
 use std::fmt::Display;
-use std::sync::Arc;
 use std::thread;
 
 use futures::Stream;
@@ -32,9 +31,8 @@ fn set_host_header() {
 
     let check = move |headers: &Headers| {
         if let Some(host) = headers.get::<Host>() {
-            host.hostname() == hostname && host.port() == port
-        } else {
-            false
+            assert_eq!(host.hostname(), hostname);
+            assert_eq!(host.port(), port);
         }
     };
 
@@ -53,9 +51,8 @@ fn set_host_header_twice() {
 
     let check = move |headers: &Headers| {
         if let Some(host) = headers.get::<Host>() {
-            host.hostname() == hostname && host.port() == port
-        } else {
-            false
+            assert_eq!(host.hostname(), hostname);
+            assert_eq!(host.port(), port);
         }
     };
 
@@ -73,9 +70,7 @@ fn set_content_type() {
 
     let check = move |headers: &Headers| {
         if let Some(content_type) = headers.get::<ContentType>() {
-            *content_type == expected_content_type
-        } else {
-            false
+            assert_eq!(*content_type, expected_content_type);
         }
     };
 
@@ -92,9 +87,7 @@ fn set_content_length() {
 
     let check = move |headers: &Headers| {
         if let Some(content_length) = headers.get::<ContentLength>() {
-            *content_length == fake_content_length
-        } else {
-            false
+            assert_eq!(*content_length, fake_content_length);
         }
     };
 
@@ -104,15 +97,10 @@ fn set_content_length() {
 fn test_custom_headers<S, C>(set_headers: S, check_headers: C)
 where
     S: FnOnce(&mut HttpHandle),
-    C: Fn(&Headers) -> bool + Send + Sync + 'static,
+    C: Fn(&Headers) + Send + Sync + 'static,
 {
-    let (check_service, check_results) = CheckService::new(check_headers);
-    let check_result = check_results
-        .into_future()
-        .map(|(result, _)| result.unwrap_or(false))
-        .map_err(|_| "failure to receive test result from other thread".to_string());
-
-    let (_server, port) = spawn_server(check_service);
+    let (mock_service, requests) = ForwardToChannel::new();
+    let (_server, port) = spawn_server(mock_service);
 
     let transport = HttpTransport::new().unwrap();
     let uri = format!("http://127.0.0.1:{}", port);
@@ -120,56 +108,41 @@ where
 
     set_headers(&mut transport_handle);
 
-    let mut reactor = Core::new().unwrap();
+    let check_request = requests
+        .into_future()
+        .map_err(|_| "failure to receive test result from other thread".to_string())
+        .and_then(|(request, _)| {
+            if let Some(request) = request {
+                check_headers(request.headers());
+                Ok(())
+            } else {
+                Err("no requests received".to_string())
+            }
+        });
+
     let send_and_check = transport_handle
         .send(Vec::new())
         .map_err(|err| err.to_string())
-        .and_then(|_| check_result);
-    let check_passed = reactor.run(send_and_check).unwrap();
+        .and_then(|_| check_request);
 
-    assert!(check_passed);
+    Core::new().unwrap().run(send_and_check).unwrap();
 }
 
-pub struct CheckService<F>
-where
-    F: Fn(&Headers) -> bool,
-{
-    check: Arc<F>,
-    sender: mpsc::Sender<bool>,
+#[derive(Clone)]
+pub struct ForwardToChannel {
+    sender: mpsc::Sender<Request>,
 }
 
-impl<F> CheckService<F>
-where
-    F: Fn(&Headers) -> bool,
-{
-    pub fn new(check: F) -> (Self, mpsc::Receiver<bool>) {
+impl ForwardToChannel {
+    pub fn new() -> (Self, mpsc::Receiver<Request>) {
         let (sender, receiver) = mpsc::channel(0);
+        let service = ForwardToChannel { sender };
 
-        let check_service = CheckService {
-            check: Arc::new(check),
-            sender,
-        };
-
-        (check_service, receiver)
+        (service, receiver)
     }
 }
 
-impl<F> Clone for CheckService<F>
-where
-    F: Fn(&Headers) -> bool,
-{
-    fn clone(&self) -> Self {
-        CheckService {
-            check: self.check.clone(),
-            sender: self.sender.clone(),
-        }
-    }
-}
-
-impl<F> Service for CheckService<F>
-where
-    F: Fn(&Headers) -> bool,
-{
+impl Service for ForwardToChannel {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
@@ -177,7 +150,7 @@ where
 
     fn call(&self, request: Request) -> Self::Future {
         let mut sender = self.sender.clone();
-        let _ = sender.try_send((self.check)(request.headers()));
+        let _ = sender.try_send(request);
 
         Ok(Response::new().with_status(StatusCode::Ok)).into_future()
     }
@@ -185,10 +158,7 @@ where
 
 pub struct ServerHandle(oneshot::Sender<()>);
 
-fn spawn_server<F>(service: CheckService<F>) -> (ServerHandle, u16)
-where
-    F: Fn(&Headers) -> bool + Send + Sync + 'static,
-{
+fn spawn_server(service: ForwardToChannel) -> (ServerHandle, u16) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (started_tx, started_rx) = oneshot::channel();
 
