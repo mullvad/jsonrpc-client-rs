@@ -32,7 +32,8 @@ use common::test_server::{Server, TestClient};
 #[test]
 fn long_request_should_timeout() {
     // Spawn a server hosting the `ServerApi` API.
-    let (_server, uri) = spawn_server();
+    let server = Server::with_delay(Duration::from_secs(1)).spawn();
+    let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
     // Create the Tokio Core event loop that will drive the RPC client and the async requests.
@@ -63,7 +64,8 @@ fn long_request_should_timeout() {
 #[test]
 fn long_request_should_succeed_with_long_timeout() {
     // Spawn a server hosting the `ServerApi` API.
-    let (_server, uri) = spawn_server();
+    let server = Server.spawn();
+    let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
     // Create the Tokio Core event loop that will drive the RPC client and the async requests.
@@ -82,10 +84,4 @@ fn long_request_should_succeed_with_long_timeout() {
     let result = core.run(rpc_future).unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
-}
-
-fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = Server::with_delay(Duration::from_secs(1)).spawn();
-    let uri = format!("http://{}", server.address());
-    (server, uri)
 }

@@ -33,7 +33,8 @@ use common::test_server::{Server, TestClient};
 #[test]
 fn localhost_ping_pong() {
     // Spawn a server hosting the `ServerApi` API.
-    let (_server, uri) = spawn_server();
+    let server = Server::new().spawn();
+    let uri = format!("http://{}", server.address());
     println!("Testing towards server at {}", uri);
 
     // Create the Tokio Core event loop that will drive the RPC client and the async requests.
@@ -62,7 +63,8 @@ fn localhost_ping_pong() {
 
 #[test]
 fn dropped_rpc_request_should_not_crash_transport() {
-    let (_server, uri) = spawn_server();
+    let server = Server::new().spawn();
+    let uri = format!("http://{}", server.address());
 
     let mut core = Core::new().unwrap();
     let transport = HttpTransport::new()
@@ -85,10 +87,4 @@ fn dropped_rpc_request_should_not_crash_transport() {
         Ok(()) => (),
         _ => panic!("Sleep did not return as it should"),
     }
-}
-
-fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = Server::new().spawn();
-    let uri = format!("http://{}", server.address());
-    (server, uri)
 }
