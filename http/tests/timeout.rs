@@ -32,7 +32,7 @@ use common::test_server::{Server, TestClient};
 #[test]
 fn long_request_should_timeout() {
     // Spawn a server hosting the `ServerApi` API.
-    let server = Server::with_delay(Duration::from_secs(1)).spawn();
+    let server = Server.spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
@@ -48,7 +48,7 @@ fn long_request_should_timeout() {
         .unwrap();
     let mut client = TestClient::new(transport);
 
-    let rpc_future = client.to_upper("HARD string TAKES too LONG");
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
     let error = core.run(rpc_future).unwrap_err();
 
     let timeout_error =
@@ -77,7 +77,7 @@ fn long_request_should_succeed_with_long_timeout() {
         .unwrap();
     let mut client = TestClient::new(transport);
 
-    let rpc_future = client.to_upper("HARD string TAKES too LONG");
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
     let result = core.run(rpc_future).unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
