@@ -21,7 +21,7 @@ extern crate jsonrpc_macros;
 #[macro_use]
 mod common;
 
-use jsonrpc_client_http::HttpTransport;
+use jsonrpc_client_http::HttpTransportBuilder;
 use std::time::Duration;
 use tokio_core::reactor::Core;
 
@@ -40,7 +40,7 @@ fn long_request_should_timeout() {
     let mut core = Core::new().unwrap();
 
     // Create the HTTP transport handle and create a RPC client with that handle.
-    let transport = HttpTransport::new()
+    let transport = HttpTransportBuilder::new()
         .timeout(Duration::from_millis(500))
         .shared(&core.handle())
         .unwrap()
@@ -69,7 +69,7 @@ fn long_request_should_succeed_with_long_timeout() {
 
     let mut core = Core::new().unwrap();
 
-    let transport = HttpTransport::new()
+    let transport = HttpTransportBuilder::new()
         .timeout(Duration::from_secs(2))
         .shared(&core.handle())
         .unwrap()
