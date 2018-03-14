@@ -63,15 +63,12 @@ fn long_request_should_timeout() {
 
 #[test]
 fn long_request_should_succeed_with_long_timeout() {
-    // Spawn a server hosting the `ServerApi` API.
     let server = Server.spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
-    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
     let mut core = Core::new().unwrap();
 
-    // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransport::new()
         .timeout(Duration::from_secs(2))
         .shared(&core.handle())
