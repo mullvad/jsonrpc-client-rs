@@ -5,17 +5,15 @@ extern crate jsonrpc_client_http;
 extern crate tokio_core;
 extern crate tokio_service;
 
-use std::fmt::Display;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot;
-use hyper::{Headers, Request, Response, StatusCode};
-use hyper::header::{ContentLength, ContentType, Header, Host};
+use hyper::{Request, Response, StatusCode};
+use hyper::header::{ContentLength, ContentType, Host};
 use hyper::server::Http;
-use tokio_core::reactor::Core;
 use tokio_service::Service;
 
 use jsonrpc_client_core::Transport;
@@ -30,14 +28,10 @@ fn set_host_header() {
         transport.set_header(Host::new(hostname, port));
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(host) = headers.get::<Host>() {
-            assert_eq!(host.hostname(), hostname);
-            assert_eq!(host.port(), port);
-        }
-    };
-
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let host = request.headers().get::<Host>().expect("No Host");
+    assert_eq!(host.hostname(), hostname);
+    assert_eq!(host.port(), port);
 }
 
 #[test]
@@ -50,14 +44,11 @@ fn set_host_header_twice() {
         transport.set_header(Host::new(hostname, port));
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(host) = headers.get::<Host>() {
-            assert_eq!(host.hostname(), hostname);
-            assert_eq!(host.port(), port);
-        }
-    };
 
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let host = request.headers().get::<Host>().expect("No Host");
+    assert_eq!(host.hostname(), hostname);
+    assert_eq!(host.port(), port);
 }
 
 #[test]
@@ -69,13 +60,13 @@ fn set_content_type() {
         transport.set_header(content_type);
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(content_type) = headers.get::<ContentType>() {
-            assert_eq!(*content_type, expected_content_type);
-        }
-    };
 
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let content_type = request
+        .headers()
+        .get::<ContentType>()
+        .expect("No ContentType");
+    assert_eq!(*content_type, expected_content_type);
 }
 
 #[test]
@@ -86,37 +77,31 @@ fn set_content_length() {
         transport.set_header(fake_content_length);
     };
 
-    let check = move |headers: &Headers| {
-        if let Some(content_length) = headers.get::<ContentLength>() {
-            assert_eq!(*content_length, fake_content_length);
-        }
-    };
-
-    test_custom_headers(set, check);
+    let request = test_custom_headers(set);
+    let content_length = request
+        .headers()
+        .get::<ContentLength>()
+        .expect("No ContentLength");
+    assert_eq!(*content_length, fake_content_length);
 }
 
-fn test_custom_headers<S, C>(set_headers: S, check_headers: C)
+fn test_custom_headers<S>(set_headers: S) -> Request
 where
     S: FnOnce(&mut HttpHandle),
-    C: Fn(&Headers) + Send + Sync + 'static,
 {
-    let (mock_service, requests) = ForwardToChannel::new();
-    let (_server, port) = spawn_server(mock_service);
+    let server = Server::spawn();
 
     let transport = HttpTransport::new().unwrap();
-    let uri = format!("http://127.0.0.1:{}", port);
+    let uri = format!("http://127.0.0.1:{}", server.port);
     let mut transport_handle = transport.handle(&uri).unwrap();
 
     set_headers(&mut transport_handle);
 
-    let mut reactor = Core::new().unwrap();
-    let send = transport_handle.send(Vec::new());
-
-    reactor.run(send).unwrap();
-
-    let request = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-
-    check_headers(request.headers());
+    transport_handle.send(Vec::new()).wait().unwrap();
+    server
+        .requests
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
 }
 
 #[derive(Clone)]
@@ -146,25 +131,35 @@ impl Service for ForwardToChannel {
     }
 }
 
-pub struct ServerHandle(oneshot::Sender<()>);
+pub struct Server {
+    pub port: u16,
+    pub requests: mpsc::Receiver<Request>,
+    _shutdown_tx: oneshot::Sender<()>,
+}
 
-fn spawn_server(service: ForwardToChannel) -> (ServerHandle, u16) {
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let (started_tx, started_rx) = oneshot::channel();
+impl Server {
+    fn spawn() -> Self {
+        let (forward_service, requests) = ForwardToChannel::new();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let (port_tx, port_rx) = oneshot::channel();
 
-    thread::spawn(move || {
-        let address = "127.0.0.1:0".parse().unwrap();
-        let server = Http::new()
-            .bind(&address, move || Ok(service.clone()))
-            .unwrap();
-        let port = server.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let address = "127.0.0.1:0".parse().unwrap();
+            let server = Http::new()
+                .bind(&address, move || Ok(forward_service.clone()))
+                .unwrap();
+            let port = server.local_addr().unwrap().port();
 
-        started_tx.send(port).unwrap();
-        server.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
-    });
+            port_tx.send(port).unwrap();
+            server.run_until(shutdown_rx.then(|_| Ok(()))).unwrap();
+        });
 
-    let server_handle = ServerHandle(shutdown_tx);
-    let server_port = started_rx.wait().unwrap();
+        let port = port_rx.wait().unwrap();
 
-    (server_handle, server_port)
+        Self {
+            port,
+            requests,
+            _shutdown_tx: shutdown_tx,
+        }
+    }
 }
