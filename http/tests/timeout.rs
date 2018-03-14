@@ -51,14 +51,10 @@ fn long_request_should_timeout() {
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
     let error = core.run(rpc_future).unwrap_err();
 
-    let timeout_error =
-        jsonrpc_client_http::Error::from(jsonrpc_client_http::ErrorKind::RequestTimeout);
-    let expected_error = jsonrpc_client_core::Error::with_chain(
-        timeout_error,
-        jsonrpc_client_core::ErrorKind::TransportError,
+    assert_error_chain_message!(error,
+        jsonrpc_client_http::RequestTimeout
+        -> jsonrpc_client_core::TransportError
     );
-
-    assert_err!(error, expected_error);
 }
 
 #[test]
