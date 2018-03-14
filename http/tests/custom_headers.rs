@@ -114,7 +114,7 @@ where
     });
 
     let transport = HttpTransport::new().unwrap();
-    let uri = format!("http://localhost:{}", port);
+    let uri = format!("http://127.0.0.1:{}", port);
     let mut transport_handle = transport.handle(&uri).unwrap();
 
     set_headers(&mut transport_handle);
