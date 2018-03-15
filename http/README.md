@@ -21,9 +21,9 @@ reached.
 TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
 
 When TLS support is compiled in the instances returned by
-[`HttpTransport::new`](struct.HttpTransport.html#method.new) and
-[`HttpTransport::shared`](struct.HttpTransport.html#method.shared) support both plaintext http
-and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
+[`HttpTransportBuilder::standalone`](struct.HttpTransportBuilder.html#method.standalone) and
+[`HttpTransportBuilder::shared`](struct.HttpTransportBuilder.html#method.shared) support both
+plaintext http and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
 
 ## Examples
 
@@ -36,7 +36,7 @@ Here is a small example of how to use this crate together with `jsonrpc_core`:
 #[macro_use] extern crate jsonrpc_client_core;
 extern crate jsonrpc_client_http;
 
-use jsonrpc_client_http::HttpTransport;
+use jsonrpc_client_http::HttpTransportBuilder;
 
 jsonrpc_client!(pub struct FizzBuzzClient {
     /// Returns the fizz-buzz string for the given number.
@@ -44,7 +44,7 @@ jsonrpc_client!(pub struct FizzBuzzClient {
 });
 
 fn main() {
-    let transport = HttpTransport::new().unwrap();
+    let transport = HttpTransportBuilder::new().standalone().unwrap();
     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
     let mut client = FizzBuzzClient::new(transport_handle);
     let result1 = client.fizz_buzz(3).call().unwrap();
