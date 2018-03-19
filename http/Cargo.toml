@@ -25,6 +25,7 @@ default = ["tls"]
 tls = ["hyper-tls", "native-tls"]
 
 [dev-dependencies]
+tokio-io = "0.1"
 jsonrpc-core = "8.0"
 jsonrpc-macros = "8.0"
 jsonrpc-http-server = "8.0"
