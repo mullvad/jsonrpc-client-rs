@@ -45,7 +45,7 @@ impl ServerApi for Server {
     }
 
     fn slow_to_upper(&self, s: String, time: u64) -> Result<String, Error> {
-        ::std::thread::sleep(Duration::from_secs(time));
+        ::std::thread::sleep(Duration::from_millis(time));
         Ok(s.to_uppercase())
     }
 
