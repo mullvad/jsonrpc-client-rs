@@ -38,14 +38,14 @@ fn long_request_should_timeout() {
 
     // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransportBuilder::new()
-        .timeout(Duration::from_millis(500))
+        .timeout(Duration::from_millis(50))
         .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
     let result = rpc_future.wait();
 
     assert_error_chain_message!(result,
@@ -61,14 +61,14 @@ fn long_request_should_succeed_with_long_timeout() {
     println!("Testing towards slow server at {}", uri);
 
     let transport = HttpTransportBuilder::new()
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_millis(150))
         .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
     let result = rpc_future.wait().unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
