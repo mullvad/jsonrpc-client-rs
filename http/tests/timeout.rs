@@ -26,13 +26,13 @@ use jsonrpc_client_http::HttpTransportBuilder;
 use std::time::Duration;
 
 // Use a simple RPC API for testing purposes.
-use common::test_server::{Server, TestClient};
+use common::mock_rpc::{MockRpcClient, MockRpcServer};
 
 
 #[test]
 fn long_request_should_timeout() {
-    // Spawn a server hosting the `ServerApi` API.
-    let server = Server.spawn();
+    // Spawn a server hosting the `MockRpcServerApi` API.
+    let server = MockRpcServer.spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
@@ -43,7 +43,7 @@ fn long_request_should_timeout() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
     let result = rpc_future.wait();
@@ -56,17 +56,17 @@ fn long_request_should_timeout() {
 
 #[test]
 fn long_request_should_succeed_with_long_timeout() {
-    let server = Server.spawn();
+    let server = MockRpcServer.spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
     let transport = HttpTransportBuilder::new()
-        .timeout(Duration::from_millis(150))
+        .timeout(Duration::from_secs(10))
         .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
     let result = rpc_future.wait().unwrap();

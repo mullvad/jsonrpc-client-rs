@@ -1,5 +1,5 @@
 #[allow(dead_code)]
-pub mod test_server;
+pub mod mock_rpc;
 
 #[allow(unused_macros)]
 macro_rules! assert_error_chain_message {
