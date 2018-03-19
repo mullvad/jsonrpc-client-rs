@@ -2,8 +2,10 @@
 
 use std::time::Duration;
 
+use futures::future::{self, Empty};
 use jsonrpc_core::{Error, IoHandler};
-use jsonrpc_http_server::{self, ServerBuilder};
+use jsonrpc_http_server::{self, hyper, ServerBuilder};
+use jsonrpc_http_server::hyper::server::{Request, Response, Service};
 
 // Generate server API trait. Actual implementation at bottom of file.
 build_rpc_trait! {
@@ -55,5 +57,18 @@ impl MockRpcServerApi for MockRpcServer {
         println!("Sleeping on server");
         ::std::thread::sleep(Duration::from_secs(time));
         Ok(())
+    }
+}
+
+pub struct UnresponsiveService;
+
+impl Service for UnresponsiveService {
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    type Future = Empty<Self::Response, Self::Error>;
+
+    fn call(&self, _: Self::Request) -> Self::Future {
+        future::empty()
     }
 }
