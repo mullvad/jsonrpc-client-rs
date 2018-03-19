@@ -81,7 +81,7 @@ extern crate native_tls;
 use futures::{future, Future, Stream};
 use futures::sync::{mpsc, oneshot};
 use hyper::{Client, Request, StatusCode, Uri};
-use hyper::header::{Header, Headers};
+pub use hyper::header;
 use jsonrpc_client_core::Transport;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -265,7 +265,7 @@ impl HttpTransport {
             request_tx: self.request_tx.clone(),
             uri,
             id: self.id.clone(),
-            headers: Headers::new(),
+            headers: header::Headers::new(),
         })
     }
 }
@@ -321,7 +321,7 @@ pub struct HttpHandle {
     request_tx: CoreSender,
     uri: Uri,
     id: Arc<AtomicUsize>,
-    headers: Headers,
+    headers: header::Headers,
 }
 
 impl HttpHandle {
@@ -329,7 +329,7 @@ impl HttpHandle {
     ///
     /// Replaces any header set by this library or by Hyper, such as the ContentType, ContentLength
     /// and Host headers.
-    pub fn set_header<H: Header>(&mut self, header: H) -> &mut Self {
+    pub fn set_header<H: header::Header>(&mut self, header: H) -> &mut Self {
         self.headers.set(header);
         self
     }

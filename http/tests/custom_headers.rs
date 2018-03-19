@@ -2,7 +2,6 @@ extern crate futures;
 extern crate hyper;
 extern crate jsonrpc_client_core;
 extern crate jsonrpc_client_http;
-extern crate tokio_core;
 extern crate tokio_service;
 
 use std::sync::mpsc;
@@ -12,8 +11,8 @@ use std::time::Duration;
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot;
 use hyper::{Request, Response, StatusCode};
-use hyper::header::{ContentLength, ContentType, Host};
 use hyper::server::Http;
+use jsonrpc_client_http::header::{ContentLength, ContentType, Host};
 use tokio_service::Service;
 
 use jsonrpc_client_core::Transport;
