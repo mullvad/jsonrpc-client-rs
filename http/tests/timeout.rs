@@ -32,7 +32,7 @@ use common::mock_rpc::{MockRpcClient, MockRpcServer};
 #[test]
 fn long_request_should_timeout() {
     // Spawn a server hosting the `MockRpcServerApi` API.
-    let server = MockRpcServer.spawn();
+    let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
@@ -56,7 +56,7 @@ fn long_request_should_timeout() {
 
 #[test]
 fn long_request_should_succeed_with_long_timeout() {
-    let server = MockRpcServer.spawn();
+    let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 

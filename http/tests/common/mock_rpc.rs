@@ -29,9 +29,9 @@ jsonrpc_client!(pub struct MockRpcClient {
 pub struct MockRpcServer;
 
 impl MockRpcServer {
-    pub fn spawn(self) -> jsonrpc_http_server::Server {
+    pub fn spawn() -> jsonrpc_http_server::Server {
         let mut io = IoHandler::new();
-        io.extend_with(self.to_delegate());
+        io.extend_with(MockRpcServer.to_delegate());
 
         ServerBuilder::new(io)
             .start_http(&"127.0.0.1:0".parse().unwrap())

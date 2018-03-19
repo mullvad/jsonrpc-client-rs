@@ -33,7 +33,7 @@ use common::mock_rpc::{MockRpcClient, MockRpcServer};
 #[test]
 fn localhost_ping_pong() {
     // Spawn a server hosting the `MockRpcServerApi` API.
-    let server = MockRpcServer.spawn();
+    let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards server at {}", uri);
 
@@ -63,7 +63,7 @@ fn localhost_ping_pong() {
 
 #[test]
 fn dropped_rpc_request_should_not_crash_transport() {
-    let server = MockRpcServer.spawn();
+    let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
 
     let mut core = Core::new().unwrap();
