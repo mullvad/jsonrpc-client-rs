@@ -21,9 +21,9 @@ extern crate jsonrpc_macros;
 #[macro_use]
 mod common;
 
+use futures::Future;
 use jsonrpc_client_http::HttpTransportBuilder;
 use std::time::Duration;
-use tokio_core::reactor::Core;
 
 // Use a simple RPC API for testing purposes.
 use common::test_server::{Server, TestClient};
@@ -36,20 +36,17 @@ fn long_request_should_timeout() {
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
-    // Create the Tokio Core event loop that will drive the RPC client and the async requests.
-    let mut core = Core::new().unwrap();
-
     // Create the HTTP transport handle and create a RPC client with that handle.
     let transport = HttpTransportBuilder::new()
         .timeout(Duration::from_millis(500))
-        .shared(&core.handle())
+        .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
 
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
-    let result = core.run(rpc_future);
+    let result = rpc_future.wait();
 
     assert_error_chain_message!(result,
         jsonrpc_client_http::RequestTimeout
@@ -63,18 +60,16 @@ fn long_request_should_succeed_with_long_timeout() {
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
-    let mut core = Core::new().unwrap();
-
     let transport = HttpTransportBuilder::new()
         .timeout(Duration::from_secs(2))
-        .shared(&core.handle())
+        .standalone()
         .unwrap()
         .handle(&uri)
         .unwrap();
     let mut client = TestClient::new(transport);
 
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 1);
-    let result = core.run(rpc_future).unwrap();
+    let result = rpc_future.wait().unwrap();
 
     assert_eq!("HARD STRING TAKES TOO LONG", result);
 }
