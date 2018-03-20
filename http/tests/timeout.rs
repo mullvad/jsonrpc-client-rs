@@ -45,7 +45,7 @@ fn long_request_should_timeout() {
         .unwrap();
     let mut client = MockRpcClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
+    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 10_000);
     let result = rpc_future.wait();
 
     assert!(result.is_err());
