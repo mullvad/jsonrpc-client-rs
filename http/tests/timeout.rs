@@ -31,7 +31,7 @@ use jsonrpc_http_server::hyper::server::Http;
 use tokio_core::reactor::{Core, Timeout};
 
 // Use a simple RPC API for testing purposes.
-use common::{MockRpcClient, MockRpcServer, SlowService};
+use common::{MockRpcClient, MockRpcServer, UnresponsiveService};
 
 
 #[test]
@@ -85,7 +85,9 @@ fn timeout_error() {
 
     ::std::thread::spawn(move || {
         let address = "127.0.0.1:0".parse().unwrap();
-        let server = Http::new().bind(&address, || Ok(SlowService)).unwrap();
+        let server = Http::new()
+            .bind(&address, || Ok(UnresponsiveService))
+            .unwrap();
 
         address_tx.send(server.local_addr().unwrap()).unwrap();
 
