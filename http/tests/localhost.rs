@@ -27,7 +27,7 @@ use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
 // Use a simple RPC API for testing purposes.
-use common::mock_rpc::{MockRpcClient, MockRpcServer};
+use common::{MockRpcClient, MockRpcServer};
 
 
 #[test]
