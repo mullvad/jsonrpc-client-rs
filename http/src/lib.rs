@@ -149,7 +149,8 @@ impl HttpTransport {
     ///
     /// The final transport that is created will not support https. Either compile the crate with
     /// the "tls" feature to get that functionality, or provide a custom Hyper client via the
-    /// [`with_client`](#method.with_client) that supports TLS.
+    /// [`HttpTransportBuilder::with_client`](struct.HttpTransportBuilder.html#method.with_client)
+    /// that supports TLS.
     pub fn new() -> HttpTransportBuilder<DefaultClient> {
         HttpTransportBuilder::with_client(DefaultClient)
     }
