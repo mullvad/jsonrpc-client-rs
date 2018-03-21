@@ -60,9 +60,9 @@ impl MockRpcServerApi for MockRpcServer {
     }
 }
 
-pub struct SlowService;
+pub struct UnresponsiveService;
 
-impl Service for SlowService {
+impl Service for UnresponsiveService {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
