@@ -42,7 +42,7 @@
 //! #[macro_use] extern crate jsonrpc_client_core;
 //! extern crate jsonrpc_client_http;
 //!
-//! use jsonrpc_client_http::HttpTransportBuilder;
+//! use jsonrpc_client_http::HttpTransport;
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number.
@@ -50,7 +50,7 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransportBuilder::new().standalone().unwrap();
+//!     let transport = HttpTransport::new().standalone().unwrap();
 //!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
