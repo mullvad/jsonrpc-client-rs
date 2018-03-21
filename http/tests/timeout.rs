@@ -52,7 +52,7 @@ fn long_request_should_timeout() {
 }
 
 #[test]
-fn long_request_should_succeed_with_long_timeout() {
+fn short_request_should_succeed() {
     let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
@@ -65,8 +65,8 @@ fn long_request_should_succeed_with_long_timeout() {
         .unwrap();
     let mut client = MockRpcClient::new(transport);
 
-    let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 100);
+    let rpc_future = client.to_upper("FAST sHoRt strIng");
     let result = rpc_future.wait().unwrap();
 
-    assert_eq!("HARD STRING TAKES TOO LONG", result);
+    assert_eq!("FAST SHORT STRING", result);
 }
