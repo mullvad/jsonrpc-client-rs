@@ -429,12 +429,9 @@ impl Transport for HttpHandle {
 mod tests {
     extern crate tokio_io;
 
-    use std::io;
-
-    use hyper::client::HttpConnector;
-    use tokio_core::net::TcpListener;
-
     use super::*;
+    use hyper::client::HttpConnector;
+    use std::io;
 
     #[test]
     fn new_shared() {
@@ -469,57 +466,6 @@ mod tests {
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
-        }
-    }
-
-    #[test]
-    fn long_request_times_out() {
-        let mut reactor = Core::new().unwrap();
-        let handle = reactor.handle();
-
-        let address = "127.0.0.1:0".parse().unwrap();
-        let server = TcpListener::bind(&address, &handle).unwrap();
-        let address = server.local_addr().unwrap();
-
-        let transport = HttpTransport::new()
-            .timeout(Duration::from_millis(100))
-            .shared(&handle)
-            .unwrap()
-            .handle(&format!("http://{}", address))
-            .unwrap();
-
-        let send_operation = transport.send(vec![1, 2, 3, 4]).map_err(Ok);
-
-        let receive_request = server
-            .incoming()
-            .take(1)
-            .into_future()
-            .map_err(|(error, _stream)| Err(error.to_string()))
-            .and_then(|(connection, _incoming)| {
-                if let Some((tcp_stream, _client_address)) = connection {
-                    Ok(tcp_stream)
-                } else {
-                    Err(Err("no connection received".to_string()))
-                }
-            })
-            .and_then(|tcp_stream| {
-                // Keeps connection open until the other end closes it
-                tokio_io::io::read_to_end(tcp_stream, Vec::new())
-                    .map_err(|error| Err(error.to_string()))
-            });
-
-        let test_timeout = Timeout::new(Duration::from_secs(1), &handle).unwrap();
-        let test_operation = test_timeout.select2(send_operation.join(receive_request));
-
-        match reactor.run(test_operation) {
-            Ok(Either::A(_)) => panic!("test timed out!"),
-            Ok(Either::B(_)) => panic!("request didn't time out as expected"),
-            Err(Either::A((error, _))) => panic!("test timeout error: {}", error),
-            Err(Either::B((Err(error), _))) => panic!("failed to receive request: {}", error),
-            Err(Either::B((Ok(error), _))) => match error.kind() {
-                &ErrorKind::RequestTimeout => (),
-                _ => panic!("failed to send request: {}", error),
-            },
         }
     }
 }
