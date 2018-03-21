@@ -26,7 +26,7 @@ use jsonrpc_client_http::HttpTransportBuilder;
 use std::time::Duration;
 
 // Use a simple RPC API for testing purposes.
-use common::mock_rpc::{MockRpcClient, MockRpcServer};
+use common::{MockRpcClient, MockRpcServer};
 
 
 #[test]
