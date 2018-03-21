@@ -144,6 +144,25 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
+    #[cfg(not(feature = "tls"))]
+    /// Returns a builder to create a `HttpTransport`.
+    ///
+    /// The final transport that is created will not support https. Either compile the crate with
+    /// the "tls" feature to get that functionality, or provide a custom Hyper client via the
+    /// [`with_client`](#method.with_client) that supports TLS.
+    pub fn new() -> HttpTransportBuilder<DefaultClient> {
+        HttpTransportBuilder::with_client(DefaultClient)
+    }
+
+    #[cfg(feature = "tls")]
+    /// Returns a builder to create a `HttpTransport`.
+    ///
+    /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
+    /// supports both http and https connections.
+    pub fn new() -> HttpTransportBuilder<DefaultTlsClient> {
+        HttpTransportBuilder::with_client(DefaultTlsClient)
+    }
+
     /// Returns a handle to this `HttpTransport` valid for a given URI.
     ///
     /// Used to create instances implementing `jsonrpc_client_core::Transport` for use with RPC
@@ -169,29 +188,6 @@ pub struct HttpTransportBuilder<C: ClientCreator> {
     timeout: Option<Duration>,
 }
 
-#[cfg(not(feature = "tls"))]
-impl HttpTransportBuilder<DefaultClient> {
-    /// Returns a builder to create a `HttpTransport`.
-    ///
-    /// The final transport that is created will not support https. Either compile the crate with
-    /// the "tls" feature to get that functionality, or provide a custom Hyper client via the
-    /// [`with_client`](#method.with_client) that supports TLS.
-    pub fn new() -> Self {
-        HttpTransportBuilder::with_client(DefaultClient)
-    }
-}
-
-#[cfg(feature = "tls")]
-impl HttpTransportBuilder<DefaultTlsClient> {
-    /// Returns a builder to create a `HttpTransport`.
-    ///
-    /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
-    /// supports both http and https connections.
-    pub fn new() -> Self {
-        HttpTransportBuilder::with_client(DefaultTlsClient)
-    }
-}
-
 impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// Returns a builder to create a `HttpTransport` using the provided `ClientCreator`.
     ///
@@ -214,6 +210,14 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         HttpTransportBuilder {
             client_creator,
             timeout: None,
+        }
+    }
+
+    /// Change the used `ClientCreator`.
+    pub fn client<NewC: ClientCreator>(self, client_creator: NewC) -> HttpTransportBuilder<NewC> {
+        HttpTransportBuilder {
+            client_creator,
+            timeout: self.timeout,
         }
     }
 
@@ -435,28 +439,32 @@ mod tests {
     #[test]
     fn new_shared() {
         let core = Core::new().unwrap();
-        HttpTransportBuilder::new().shared(&core.handle()).unwrap();
+        HttpTransport::new().shared(&core.handle()).unwrap();
     }
 
     #[test]
     fn new_standalone() {
-        HttpTransportBuilder::new().standalone().unwrap();
+        HttpTransport::new().standalone().unwrap();
     }
 
     #[test]
     fn new_custom_client() {
-        HttpTransportBuilder::with_client(|handle: &Handle| {
-            Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
-        }).standalone()
+        HttpTransport::new()
+            .client(|handle: &Handle| {
+                Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
+            })
+            .standalone()
             .unwrap();
     }
 
     #[test]
     fn failing_client_creator() {
-        let error = HttpTransportBuilder::with_client(|_: &Handle| {
-            Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
-                as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-        }).standalone()
+        let error = HttpTransport::new()
+            .client(|_: &Handle| {
+                Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
+                    as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+            })
+            .standalone()
             .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
@@ -473,7 +481,7 @@ mod tests {
         let server = TcpListener::bind(&address, &handle).unwrap();
         let address = server.local_addr().unwrap();
 
-        let transport = HttpTransportBuilder::new()
+        let transport = HttpTransport::new()
             .timeout(Duration::from_millis(100))
             .shared(&handle)
             .unwrap()

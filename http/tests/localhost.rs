@@ -22,7 +22,7 @@ mod common;
 
 use futures::Future;
 use futures::future::Either;
-use jsonrpc_client_http::HttpTransportBuilder;
+use jsonrpc_client_http::HttpTransport;
 use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
@@ -41,7 +41,7 @@ fn localhost_ping_pong() {
     let mut core = Core::new().unwrap();
 
     // Create the HTTP transport handle and create a RPC client with that handle.
-    let transport = HttpTransportBuilder::new()
+    let transport = HttpTransport::new()
         .shared(&core.handle())
         .unwrap()
         .handle(&uri)
@@ -67,7 +67,7 @@ fn dropped_rpc_request_should_not_crash_transport() {
     let uri = format!("http://{}", server.address());
 
     let mut core = Core::new().unwrap();
-    let transport = HttpTransportBuilder::new()
+    let transport = HttpTransport::new()
         .shared(&core.handle())
         .unwrap()
         .handle(&uri)

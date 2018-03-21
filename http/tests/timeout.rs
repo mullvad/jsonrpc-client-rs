@@ -22,7 +22,7 @@ extern crate jsonrpc_macros;
 mod common;
 
 use futures::Future;
-use jsonrpc_client_http::HttpTransportBuilder;
+use jsonrpc_client_http::HttpTransport;
 use std::time::Duration;
 
 // Use a simple RPC API for testing purposes.
@@ -37,7 +37,7 @@ fn long_request_should_timeout() {
     println!("Testing towards slow server at {}", uri);
 
     // Create the HTTP transport handle and create a RPC client with that handle.
-    let transport = HttpTransportBuilder::new()
+    let transport = HttpTransport::new()
         .timeout(Duration::from_millis(50))
         .standalone()
         .unwrap()
@@ -57,7 +57,7 @@ fn short_request_should_succeed() {
     let uri = format!("http://{}", server.address());
     println!("Testing towards slow server at {}", uri);
 
-    let transport = HttpTransportBuilder::new()
+    let transport = HttpTransport::new()
         .timeout(Duration::from_secs(10))
         .standalone()
         .unwrap()
