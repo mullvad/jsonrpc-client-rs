@@ -213,14 +213,6 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         }
     }
 
-    /// Change the used `ClientCreator`.
-    pub fn client<NewC: ClientCreator>(self, client_creator: NewC) -> HttpTransportBuilder<NewC> {
-        HttpTransportBuilder {
-            client_creator,
-            timeout: self.timeout,
-        }
-    }
-
     /// Configure the timeout for RPC requests.
     pub fn timeout(mut self, duration: Duration) -> Self {
         self.timeout = Some(duration);
@@ -446,22 +438,18 @@ mod tests {
 
     #[test]
     fn new_custom_client() {
-        HttpTransport::new()
-            .client(|handle: &Handle| {
-                Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
-            })
-            .standalone()
+        HttpTransportBuilder::with_client(|handle: &Handle| {
+            Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
+        }).standalone()
             .unwrap();
     }
 
     #[test]
     fn failing_client_creator() {
-        let error = HttpTransport::new()
-            .client(|_: &Handle| {
-                Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
-                    as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-            })
-            .standalone()
+        let error = HttpTransportBuilder::with_client(|_: &Handle| {
+            Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
+                as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
+        }).standalone()
             .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
