@@ -18,14 +18,14 @@ reached.
 
 ## TLS / HTTPS
 
-TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
+TLS support is compiled if the "tls" feature is enabled.
 
-When TLS support is compiled in the builder returned by [`HttpTransport::new`] will create a
+When TLS support is compiled in the builder returned by [`HttpTransport::with_tls`] will create a
 [`HttpTransport`] that supports both plaintext http and https over TLS, backed by the
 `hyper_tls::HttpsConnector` connector.
 
 [`HttpTransport`]: struct.HttpTransport.html
-[`HttpTransport::new`]: struct.HttpTransport.html#method.new
+[`HttpTransport::with_tls`]: struct.HttpTransport.html#method.with_tls
 
 ## Examples
 
@@ -46,7 +46,7 @@ jsonrpc_client!(pub struct FizzBuzzClient {
 });
 
 fn main() {
-    let transport = HttpTransport::new().standalone().unwrap();
+    let transport = HttpTransport::with_tls().standalone().unwrap();
     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
     let mut client = FizzBuzzClient::new(transport_handle);
     let result1 = client.fizz_buzz(3).call().unwrap();

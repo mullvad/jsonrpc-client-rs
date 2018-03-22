@@ -30,7 +30,7 @@ jsonrpc_client!(pub struct FizzBuzzClient {
 });
 
 fn main() {
-    let transport = HttpTransport::new().standalone().unwrap();
+    let transport = HttpTransport::with_tls().standalone().unwrap();
     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
     let mut client = FizzBuzzClient::new(transport_handle);
     let result1 = client.fizz_buzz(3).call().unwrap();
