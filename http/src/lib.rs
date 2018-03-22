@@ -26,7 +26,9 @@
 //!
 //! TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
 //!
-//! When TLS support is compiled in the instances returned by
+//! When TLS support is compiled in the
+//! [`HttpTransport::with_tls`](struct.HttpTransport.html#method.with_tls) constructor can be used
+//! so that the instances returned by
 //! [`HttpTransportBuilder::standalone`](struct.HttpTransportBuilder.html#method.standalone) and
 //! [`HttpTransportBuilder::shared`](struct.HttpTransportBuilder.html#method.shared) support both
 //! plaintext http and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
@@ -50,8 +52,10 @@
 //! });
 //!
 //! fn main() {
+//!     // If the `tls` feature is enabled, the `with_tls` constructor can be used instead of
+//!     // `new`, which will then allow connections to https URLs.
 //!     let transport = HttpTransport::new().standalone().unwrap();
-//!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
+//!     let transport_handle = transport.handle("http://api.fizzbuzzexample.org/rpc/").unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
 //!     let result2 = client.fizz_buzz(4).call().unwrap();
@@ -145,11 +149,11 @@ pub struct HttpTransport {
 }
 
 impl HttpTransport {
-    #[cfg(not(feature = "tls"))]
     /// Returns a builder to create a `HttpTransport`.
     ///
     /// The final transport that is created will not support https. Either compile the crate with
-    /// the "tls" feature to get that functionality, or provide a custom Hyper client via the
+    /// the "tls" feature to get that functionality through the [`with_tls`](#method.with_tls)
+    /// constructor, or provide a custom Hyper client via the
     /// [`HttpTransportBuilder::with_client`](struct.HttpTransportBuilder.html#method.with_client)
     /// that supports TLS.
     pub fn new() -> HttpTransportBuilder<DefaultClient> {
@@ -157,11 +161,11 @@ impl HttpTransport {
     }
 
     #[cfg(feature = "tls")]
-    /// Returns a builder to create a `HttpTransport`.
+    /// Returns a builder to create a `HttpTransport` with support for https.
     ///
     /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
     /// supports both http and https connections.
-    pub fn new() -> HttpTransportBuilder<DefaultTlsClient> {
+    pub fn with_tls() -> HttpTransportBuilder<DefaultTlsClient> {
         HttpTransportBuilder::with_client(DefaultTlsClient)
     }
 
