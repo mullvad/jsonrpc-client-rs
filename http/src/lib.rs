@@ -26,12 +26,11 @@
 //!
 //! TLS support is compiled if the "tls" feature is enabled.
 //!
-//! When TLS support is compiled in the
-//! [`HttpTransport::with_tls`](struct.HttpTransport.html#method.with_tls) constructor can be used
-//! so that the instances returned by
-//! [`HttpTransportBuilder::standalone`](struct.HttpTransportBuilder.html#method.standalone) and
-//! [`HttpTransportBuilder::shared`](struct.HttpTransportBuilder.html#method.shared) support both
-//! plaintext http and https over TLS, backed by the `hyper_tls::HttpsConnector` connector.
+//! When TLS support is enabled the builder returned from [`HttpTransport::with_tls`][with_tls]
+//! will produce a `HttpTransport` supporting both plaintext http and encrypted https over TLS,
+//! backed by the `hyper_tls::HttpsConnector` connector.
+//!
+//! [with_tls]: struct.HttpTransport.html#method.with_tls
 //!
 //! # Examples
 //!
