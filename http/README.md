@@ -18,14 +18,14 @@ reached.
 
 ## TLS / HTTPS
 
-TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
+TLS support is compiled if the "tls" feature is enabled.
 
-When TLS support is compiled in the builder returned by [`HttpTransport::new`] will create a
-[`HttpTransport`] that supports both plaintext http and https over TLS, backed by the
+When TLS support is enabled the builder returned from [`HttpTransport::with_tls`] will produce a
+[`HttpTransport`] supporting both plaintext http and encrypted https over TLS, backed by the
 `hyper_tls::HttpsConnector` connector.
 
 [`HttpTransport`]: struct.HttpTransport.html
-[`HttpTransport::new`]: struct.HttpTransport.html#method.new
+[`HttpTransport::with_tls`]: struct.HttpTransport.html#method.with_tls
 
 ## Examples
 
