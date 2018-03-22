@@ -27,12 +27,12 @@ use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
 // Use a simple RPC API for testing purposes.
-use common::test_server::{Server, TestClient};
+use common::{MockRpcClient, MockRpcServer};
 
 
 #[test]
 fn localhost_ping_pong() {
-    // Spawn a server hosting the `ServerApi` API.
+    // Spawn a server hosting the `MockRpcServerApi` API.
     let (_server, uri) = spawn_server();
     println!("Testing towards server at {}", uri);
 
@@ -45,7 +45,7 @@ fn localhost_ping_pong() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     // Just calling the method gives back a `RpcRequest`, which is a future
     // that can be used to execute the actual RPC call.
@@ -70,7 +70,7 @@ fn dropped_rpc_request_should_not_crash_transport() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     let rpc = client.sleep(5).map_err(|e| e.to_string());
     let timeout = Timeout::new(Duration::from_millis(100), &core.handle()).unwrap();
@@ -88,7 +88,7 @@ fn dropped_rpc_request_should_not_crash_transport() {
 }
 
 fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = Server::new().spawn();
+    let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
     (server, uri)
 }
