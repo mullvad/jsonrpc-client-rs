@@ -60,7 +60,6 @@ fn long_request_should_timeout() {
 fn short_request_should_succeed() {
     let server = MockRpcServer::spawn();
     let uri = format!("http://{}", server.address());
-    println!("Testing towards slow server at {}", uri);
 
     let transport = HttpTransport::new()
         .timeout(Duration::from_secs(10))
