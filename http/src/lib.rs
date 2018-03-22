@@ -24,7 +24,7 @@
 //!
 //! # TLS / HTTPS
 //!
-//! TLS support is compiled if the "tls" feature is enabled (it is enabled by default).
+//! TLS support is compiled if the "tls" feature is enabled.
 //!
 //! When TLS support is compiled in the
 //! [`HttpTransport::with_tls`](struct.HttpTransport.html#method.with_tls) constructor can be used
