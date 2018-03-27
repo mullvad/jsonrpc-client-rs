@@ -90,7 +90,7 @@ where
 {
     let server = Server::spawn();
 
-    let transport = HttpTransport::new().unwrap();
+    let transport = HttpTransport::new().standalone().unwrap();
     let uri = format!("http://127.0.0.1:{}", server.port);
     let mut transport_handle = transport.handle(&uri).unwrap();
 

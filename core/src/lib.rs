@@ -38,9 +38,9 @@
 //! });
 //!
 //! fn main() {
-//!     let transport = HttpTransport::new().unwrap();
+//!     let transport = HttpTransport::new().standalone().unwrap();
 //!     let transport_handle = transport
-//!         .handle("https://api.fizzbuzzexample.org/rpc/")
+//!         .handle("http://api.fizzbuzzexample.org/rpc/")
 //!         .unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
@@ -290,9 +290,9 @@ mod tests {
 
     /// A transport that always returns an "Invalid request" error
     #[derive(Clone)]
-    struct ErrorTransport;
+    struct InvalidRequestTransport;
 
-    impl Transport for ErrorTransport {
+    impl Transport for InvalidRequestTransport {
         type Future = BoxFuture<Vec<u8>, io::Error>;
         type Error = io::Error;
 
@@ -311,6 +311,26 @@ mod tests {
                 }
             });
             Box::new(futures::future::ok(serde_json::to_vec(&json).unwrap()))
+        }
+    }
+
+    /// A transport that always returns a future that fails
+    #[derive(Clone)]
+    struct ErrorTransport;
+
+    impl Transport for ErrorTransport {
+        type Future = BoxFuture<Vec<u8>, io::Error>;
+        type Error = io::Error;
+
+        fn get_next_id(&mut self) -> u64 {
+            1
+        }
+
+        fn send(&self, _json_data: Vec<u8>) -> Self::Future {
+            Box::new(futures::future::err(io::Error::new(
+                io::ErrorKind::Other,
+                "Internal transport error",
+            )))
         }
     }
 
@@ -334,8 +354,8 @@ mod tests {
     }
 
     #[test]
-    fn error() {
-        let mut client = TestRpcClient::new(ErrorTransport);
+    fn invalid_request() {
+        let mut client = TestRpcClient::new(InvalidRequestTransport);
         let error = client.ping("").call().unwrap_err();
         if let &ErrorKind::JsonRpcError(ref json_error) = error.kind() {
             use jsonrpc_core::ErrorCode;
@@ -344,6 +364,15 @@ mod tests {
             assert_eq!(Some(json!{[1, 2, 3]}), json_error.data);
         } else {
             panic!("Wrong error kind");
+        }
+    }
+
+    #[test]
+    fn transport_error() {
+        let mut client = TestRpcClient::new(ErrorTransport);
+        match client.ping("").call().unwrap_err().kind() {
+            &ErrorKind::TransportError => (),
+            _ => panic!("Wrong error kind"),
         }
     }
 }

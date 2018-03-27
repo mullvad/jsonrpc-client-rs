@@ -18,48 +18,35 @@ extern crate jsonrpc_http_server;
 #[macro_use]
 extern crate jsonrpc_macros;
 
+mod common;
+
 use futures::Future;
 use futures::future::Either;
 use jsonrpc_client_http::HttpTransport;
-use jsonrpc_core::{Error, IoHandler};
-use jsonrpc_http_server::ServerBuilder;
 use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
 
-
-// Generate server API trait. Actual implementation at bottom of file.
-build_rpc_trait! {
-    pub trait ServerApi {
-        #[rpc(name = "to_upper")]
-        fn to_upper(&self, String) -> Result<String, Error>;
-
-        #[rpc(name = "sleep")]
-        fn sleep(&self, u64) -> Result<(), Error>;
-    }
-}
-
-// Generate client struct with same API as server.
-jsonrpc_client!(pub struct TestClient {
-    pub fn to_upper(&mut self, string: &str) -> RpcRequest<String>;
-    pub fn sleep(&mut self, time: u64) -> RpcRequest<()>;
-});
+// Use a simple RPC API for testing purposes.
+use common::{MockRpcClient, MockRpcServer};
 
 
 #[test]
 fn localhost_ping_pong() {
-    // Spawn a server hosting the `ServerApi` API.
-    let (_server, uri) = spawn_server();
+    // Spawn a server hosting the `MockRpcServerApi` API.
+    let server = MockRpcServer::spawn();
+    let uri = format!("http://{}", server.address());
     println!("Testing towards server at {}", uri);
 
     // Create the Tokio Core event loop that will drive the RPC client and the async requests.
     let mut core = Core::new().unwrap();
 
     // Create the HTTP transport handle and create a RPC client with that handle.
-    let transport = HttpTransport::shared(&core.handle())
+    let transport = HttpTransport::new()
+        .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     // Just calling the method gives back a `RpcRequest`, which is a future
     // that can be used to execute the actual RPC call.
@@ -76,14 +63,16 @@ fn localhost_ping_pong() {
 
 #[test]
 fn dropped_rpc_request_should_not_crash_transport() {
-    let (_server, uri) = spawn_server();
+    let server = MockRpcServer::spawn();
+    let uri = format!("http://{}", server.address());
 
     let mut core = Core::new().unwrap();
-    let transport = HttpTransport::shared(&core.handle())
+    let transport = HttpTransport::new()
+        .shared(&core.handle())
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = TestClient::new(transport);
+    let mut client = MockRpcClient::new(transport);
 
     let rpc = client.sleep(5).map_err(|e| e.to_string());
     let timeout = Timeout::new(Duration::from_millis(100), &core.handle()).unwrap();
@@ -98,32 +87,4 @@ fn dropped_rpc_request_should_not_crash_transport() {
         Ok(()) => (),
         _ => panic!("Sleep did not return as it should"),
     }
-}
-
-
-/// Simple struct that will implement the RPC API defined at the top of this file.
-struct Server;
-
-impl ServerApi for Server {
-    fn to_upper(&self, s: String) -> Result<String, Error> {
-        Ok(s.to_uppercase())
-    }
-
-    fn sleep(&self, time: u64) -> Result<(), Error> {
-        println!("Sleeping on server");
-        ::std::thread::sleep(Duration::from_secs(time));
-        Ok(())
-    }
-}
-
-fn spawn_server() -> (jsonrpc_http_server::Server, String) {
-    let server = Server;
-    let mut io = IoHandler::new();
-    io.extend_with(server.to_delegate());
-
-    let server = ServerBuilder::new(io)
-        .start_http(&"127.0.0.1:0".parse().unwrap())
-        .unwrap();
-    let uri = format!("http://{}", server.address());
-    (server, uri)
 }
