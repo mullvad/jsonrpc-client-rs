@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 ### Added
 - Allow setting custom HTTP headers for RPC requests.
+- Allow setting a custom timeout on `HttpTransport`.
+
+### Changed
+- Reduce boxing by making the transport future an associated type on the `Transport` trait.
+- Disable TLS support by default and rename HttpTransport constructors to something that does not
+  change with activation of features.
 
 
 ## [0.3.0] - 2018-03-06
