@@ -160,11 +160,11 @@ impl HttpTransport {
         HttpTransportBuilder::with_client(DefaultClient)
     }
 
-    #[cfg(feature = "tls")]
     /// Returns a builder to create a `HttpTransport` with support for https.
     ///
     /// The final transport that is created uses the `hyper_tls::HttpsConnector` connector, and
     /// supports both http and https connections.
+    #[cfg(feature = "tls")]
     pub fn with_tls() -> HttpTransportBuilder<DefaultTlsClient> {
         HttpTransportBuilder::with_client(DefaultTlsClient)
     }
