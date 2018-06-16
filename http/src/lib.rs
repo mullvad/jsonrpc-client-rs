@@ -53,7 +53,9 @@
 //!
 //! fn main() {
 //!     let transport = HttpTransport::new().standalone().unwrap();
-//!     let transport_handle = transport.handle("https://api.fizzbuzzexample.org/rpc/").unwrap();
+//!     let transport_handle = transport
+//!         .handle("https://api.fizzbuzzexample.org/rpc/")
+//!         .unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
 //!     let result1 = client.fizz_buzz(3).call().unwrap();
 //!     let result2 = client.fizz_buzz(4).call().unwrap();
@@ -80,19 +82,19 @@ extern crate hyper_tls;
 #[cfg(feature = "tls")]
 extern crate native_tls;
 
-use futures::{Async, Future, Poll, Stream};
 use futures::future::{self, Either, Select2};
 use futures::sync::{mpsc, oneshot};
-use hyper::{Client, Request, StatusCode, Uri};
+use futures::{Async, Future, Poll, Stream};
 pub use hyper::header;
+use hyper::{Client, Request, StatusCode, Uri};
 use jsonrpc_client_core::Transport;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tokio_core::reactor::{Core, Timeout};
 pub use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Core, Timeout};
 
 mod client_creator;
 pub use client_creator::*;
@@ -252,7 +254,8 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// Creates the final `HttpTransport` backed by the Tokio `Handle` given to it. Use the
     /// [`standalone`](#method.standalone) method to make it create its own internal event loop.
     pub fn shared(self, handle: &Handle) -> Result<HttpTransport> {
-        let client = self.client_creator
+        let client = self
+            .client_creator
             .create(handle)
             .chain_err(|| ErrorKind::ClientCreatorError)?;
         let (request_tx, request_rx) = mpsc::unbounded();

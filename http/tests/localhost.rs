@@ -20,8 +20,8 @@ extern crate jsonrpc_macros;
 
 mod common;
 
-use futures::Future;
 use futures::future::Either;
+use futures::Future;
 use jsonrpc_client_http::HttpTransport;
 use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};

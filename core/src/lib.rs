@@ -66,8 +66,8 @@ extern crate serde;
 #[cfg_attr(test, macro_use)]
 extern crate serde_json;
 
-use futures::Async;
 use futures::future::Future;
+use futures::Async;
 use jsonrpc_core::types::{Id, MethodCall, Params, Version};
 use serde_json::Value as JsonValue;
 
@@ -221,8 +221,8 @@ where
 {
     let id = Id::Num(transport.get_next_id());
     trace!("Serializing call to method \"{}\" with id {:?}", method, id);
-    let request_serialization_result = serialize_request(id.clone(), method, params)
-        .chain_err(|| ErrorKind::SerializeError);
+    let request_serialization_result =
+        serialize_request(id.clone(), method, params).chain_err(|| ErrorKind::SerializeError);
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
