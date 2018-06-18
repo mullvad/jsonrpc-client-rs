@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use futures::future::{Future, FutureResult, IntoFuture};
 use futures::sync::oneshot;
-use hyper::{Request, Response, StatusCode};
 use hyper::server::Http;
+use hyper::{Request, Response, StatusCode};
 use jsonrpc_client_http::header::{ContentLength, ContentType, Host};
 use tokio_service::Service;
 

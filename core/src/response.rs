@@ -6,10 +6,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use {ErrorKind, Result, ResultExt};
 use jsonrpc_core::types::{Id, Output, Version};
 use serde;
 use serde_json;
+use {ErrorKind, Result, ResultExt};
 
 /// Parses a binary response into json, extracts the "result" field and tries to deserialize that
 /// to the desired type.

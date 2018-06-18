@@ -1,5 +1,5 @@
-use hyper::Body;
 use hyper::client::{Client, Connect, HttpConnector};
+use hyper::Body;
 use std::io;
 use tokio_core::reactor::Handle;
 

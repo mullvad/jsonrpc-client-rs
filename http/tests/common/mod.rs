@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use futures::future::{self, Empty};
 use jsonrpc_core::{Error, IoHandler};
-use jsonrpc_http_server::{self, hyper, ServerBuilder};
 use jsonrpc_http_server::hyper::server::{Request, Response, Service};
+use jsonrpc_http_server::{self, hyper, ServerBuilder};
 
 // Generate server API trait. Actual implementation at bottom of file.
 build_rpc_trait! {
