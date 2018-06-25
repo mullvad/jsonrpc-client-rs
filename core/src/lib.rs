@@ -56,7 +56,7 @@
 #![deny(missing_docs)]
 
 #[macro_use]
-extern crate error_chain;
+pub extern crate error_chain;
 #[macro_use]
 extern crate futures;
 extern crate jsonrpc_core;

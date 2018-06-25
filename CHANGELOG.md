@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 
+## [0.5.0] - 2018-06-25
+### Changed
+- Upgrade error-chain dependency to 0.12 and publicly export it.
+
+
 ## [0.4.0] - 2018-06-18
 ### Added
 - Allow setting custom HTTP headers for RPC requests.
