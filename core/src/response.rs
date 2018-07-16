@@ -19,10 +19,10 @@ where
 {
     let response: Output = serde_json::from_slice(response_raw)
         .chain_err(|| ErrorKind::ResponseError("Not valid json"))?;
-    ensure!(
+    /*ensure!(
         response.version() == Some(Version::V2),
         ErrorKind::ResponseError("Not JSON-RPC 2.0 compatible")
-    );
+    );*/
     ensure!(
         response.id() == expected_id,
         ErrorKind::ResponseError("Response id not equal to request id")
