@@ -29,7 +29,7 @@ where
     );
     match response {
         Output::Success(success) => {
-            trace!("Received json result: {}", success.result);
+            println!("Received json result: {}", success.result);
             serde_json::from_value(success.result)
                 .chain_err(|| ErrorKind::ResponseError("Not valid for target type"))
         }
