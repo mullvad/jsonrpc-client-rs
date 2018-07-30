@@ -66,10 +66,18 @@ extern crate serde;
 #[cfg_attr(test, macro_use)]
 extern crate serde_json;
 
-use futures::future::Future;
-use futures::Async;
-use jsonrpc_core::types::{Id, MethodCall, Params, Version};
+use futures::future::{self, Future};
+use futures::sync::{mpsc, oneshot};
+use futures::{Async, AsyncSink};
+use futures::{Sink, Stream};
+use jsonrpc_core::types::{
+    Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Success as RpcSuccess,
+    Version,
+};
 use serde_json::Value as JsonValue;
+
+
+use std::collections::HashMap;
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -91,10 +99,23 @@ error_chain! {
         SerializeError {
             description("Unable to serialize the method parameters")
         }
+        /// Error when deserializing server response
+        DeserializeError {
+            description("Unable to deserialize response")
+        }
         /// Error while deserializing or parsing the response data.
         ResponseError(msg: &'static str) {
             description("Unable to deserialize the response into the desired type")
             display("Unable to deserialize the response: {}", msg)
+        }
+        /// The server returned a response with an incorrect version
+        InvalidVersion {
+            description("Method call returned a response that was not specified as JSON-RPC 2.0")
+        }
+        /// Error when trying to send a new mesage to the server because the client is already
+        /// shut down.
+        Shutdown {
+            description("RPC Client already shut down")
         }
         /// The request was replied to, but with a JSON-RPC 2.0 error.
         JsonRpcError(error: jsonrpc_core::Error) {
@@ -201,6 +222,356 @@ pub trait Transport {
     fn send(&self, json_data: Vec<u8>) -> Self::Future;
 }
 
+/// This handle allows one to create futures for RPC invocations and to close a running Client.
+#[derive(Debug, Clone)]
+pub struct ClientHandle {
+    rpc_call_chan: mpsc::Sender<ClientCall>,
+}
+
+impl ClientHandle {
+    /// Invokes an RPC and creates a future representing the RPC's result.
+    pub fn call_method<T>(
+        &self,
+        method: impl Into<String>,
+        parameters: impl serde::Serialize,
+    ) -> impl Future<Item = T, Error = Error>
+    where
+        T: serde::de::DeserializeOwned + Send,
+    {
+        let (tx, rx) = oneshot::channel();
+
+        let rpc_chan = self.rpc_call_chan.clone();
+
+        future::result(serialize_parameters(parameters))
+            .and_then(|params| {
+                rpc_chan
+                    .send(ClientCall::RpcCall(method.into(), params, tx))
+                    .map_err(|_| ErrorKind::Shutdown.into())
+            }).then(|_| rx.map_err(|_| ErrorKind::Shutdown))
+            .flatten()
+            .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
+            .flatten()
+            .from_err()
+    }
+
+
+    /// Sends a notificaiton to the Server.
+    pub fn send_notification<P, T>(
+        &self,
+        method: String,
+        parameters: P,
+    ) -> impl Future<Item = (), Error = Error>
+    where
+        P: serde::Serialize,
+    {
+        let (tx, rx) = oneshot::channel();
+
+        let rpc_chan = self.rpc_call_chan.clone();
+
+        future::result(serialize_parameters(parameters))
+            .and_then(|params| {
+                rpc_chan
+                    .send(ClientCall::Notification(method, params, tx))
+                    .map_err(|_| ErrorKind::Shutdown.into())
+            }).then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
+            .flatten()
+    }
+}
+
+#[derive(Debug)]
+struct IdGenerator {
+    next_id: u64,
+}
+
+impl IdGenerator {
+    fn new() -> IdGenerator {
+        IdGenerator { next_id: 1 }
+    }
+
+    fn next(&mut self) -> Id {
+        let id = Id::Num(self.next_id);
+        self.next_id += 1;
+        id
+    }
+}
+
+
+/// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
+/// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
+/// To send and receive messages, one should use the ClientHandle.
+#[derive(Debug)]
+pub struct Client<W, R, E>
+where
+    W: Sink<SinkItem = String, SinkError = E>,
+    R: Stream<Item = String, Error = E>,
+    E: std::error::Error + Send + 'static,
+{
+    // request channel
+    rpc_call_rx: mpsc::Receiver<ClientCall>,
+
+    // state
+    id_generator: IdGenerator,
+    shutting_down: bool,
+    pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
+    pending_payload: Option<String>,
+    fatal_error: Option<Error>,
+
+    // transport
+    transport_tx: W,
+    transport_rx: R,
+}
+
+impl<W, R, E> Client<W, R, E>
+where
+    W: Sink<SinkItem = String, SinkError = E>,
+    R: Stream<Item = String, Error = E>,
+    E: std::error::Error + Send + 'static,
+{
+    /// To create a new Client, one must provide a transport sink and stream pair. The transport
+    /// sinks are expected to send and receive strings which should hold exactly one JSON
+    /// object. If any error is returned by either the sink or the stream, this future will fail,
+    /// and all pending requests will be dropped. If the transport stream finishes, this future
+    /// will resolve without an error. The client will resolve once all of it's handles and
+    /// corresponding futures get resolved.
+    pub fn new(transport_tx: W, transport_rx: R, buffer_size: usize) -> (Self, ClientHandle) {
+        let (rpc_call_chan, rpc_call_rx) = mpsc::channel(buffer_size);
+
+        (
+            Client {
+                // request channel
+                rpc_call_rx,
+
+                // state
+                id_generator: IdGenerator::new(),
+                pending_payload: None,
+                shutting_down: false,
+                fatal_error: None,
+                pending_requests: HashMap::new(),
+
+                // transport
+                transport_tx,
+                transport_rx,
+            },
+            ClientHandle { rpc_call_chan },
+        )
+    }
+
+    fn should_shut_down(&mut self) -> bool {
+        self.fatal_error.is_some() || self.shutting_down
+    }
+
+    /// Handles incoming RPC requests from handles, drains incoming responses from the transport
+    /// stream and drives the transport sink.
+    fn handle_messages(&mut self) -> Result<()> {
+        // try send a leftover payload
+        if let Some(payload) = self.pending_payload.take() {
+            self.send_payload(payload)?;
+        }
+        // drain incoming payload
+        self.drain_incoming_messages()?;
+        // drain incoming rpc requests, only if the writing pipe is ready
+        self.drain_calls()?;
+        // poll transport tx to drive sending
+        self.drive_transport()?;
+        Ok(())
+    }
+
+    fn send_payload(&mut self, json_string: String) -> Result<()> {
+        ensure!(self.fatal_error.is_none(), ErrorKind::TransportError);
+        match self.transport_tx.start_send(json_string) {
+            Ok(AsyncSink::Ready) => Ok(()),
+            Ok(AsyncSink::NotReady(payload)) => {
+                self.pending_payload = Some(payload);
+                Ok(())
+            }
+            Err(e) => Err(e).chain_err(|| ErrorKind::TransportError),
+        }
+    }
+
+    fn drain_incoming_messages(&mut self) -> Result<()> {
+        loop {
+            match self
+                .transport_rx
+                .poll()
+                .chain_err(|| ErrorKind::TransportError)?
+            {
+                Async::Ready(Some(new_payload)) => {
+                    self.handle_payload(new_payload)?;
+                    continue;
+                }
+                Async::Ready(None) => {
+                    trace!("transport receiver shut down, shutting down as well");
+                    self.shutting_down = true;
+                    return Ok(());
+                }
+                Async::NotReady => return Ok(()),
+            }
+        }
+    }
+
+    fn handle_payload(&mut self, payload: String) -> Result<()> {
+        let response: Output = serde_json::from_str(&payload)
+            .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
+        self.handle_response(response)
+    }
+
+    fn handle_response(&mut self, output: Output) -> Result<()> {
+        if output.version() != Some(jsonrpc_core::types::Version::V2) {
+            return Err(ErrorKind::InvalidVersion.into());
+        };
+        let (id, result): (Id, Result<JsonValue>) = match output {
+            Output::Success(RpcSuccess { result, id, .. }) => (id, Ok(result)),
+            Output::Failure(RpcFailure { id, error, .. }) => {
+                (id, Err(ErrorKind::JsonRpcError(error).into()))
+            }
+        };
+
+        match self.pending_requests.remove(&id) {
+            Some(completion_chan) => Self::send_response(&id, completion_chan, result),
+            None => trace!("Received response with an invalid id {:?}", id),
+        };
+        Ok(())
+    }
+
+    fn drain_calls(&mut self) -> Result<()> {
+        loop {
+            // can only drain incoming RPC calls if the transport is ready to send a payload.  If
+            // there's a pending payload present, it must be because the transport
+            if self.pending_payload.is_some() {
+                return Ok(());
+            }
+
+            // There's no pending payload, so new RPC requests can be processed.
+            match self.rpc_call_rx.poll() {
+                Ok(Async::NotReady) => return Ok(()),
+                Ok(Async::Ready(Some(call))) => {
+                    self.handle_call(call)?;
+                    continue;
+                }
+                Ok(Async::Ready(None)) => {
+                    // technically unreachable as we always hold on to the sender
+                    trace!("All client handles and futures dropped, shutting down");
+                    return Err(ErrorKind::Shutdown.into());
+                }
+                Err(_) => {
+                    unreachable!("RPC channel returned an error, should never happen");
+                }
+            }
+        }
+    }
+
+    fn handle_call(&mut self, call: ClientCall) -> Result<()> {
+        match call {
+            ClientCall::RpcCall(method, parameters, completion) => {
+                let new_id = self.id_generator.next();
+                match serialize_method_request(new_id.clone(), method, parameters) {
+                    Ok(payload) => {
+                        self.add_new_call(new_id, completion);
+                        self.send_payload(payload)?;
+                    }
+                    Err(err) => {
+                        Self::send_response(&new_id, completion, Err(err));
+                    }
+                };
+            }
+            ClientCall::Notification(method, parameters, completion) => {
+                match serialize_notification_request(method, parameters) {
+                    Ok(payload) => {
+                        self.send_payload(payload)?;
+                    }
+                    Err(e) => {
+                        if let Err(_) = completion.send(Err(e)) {
+                            trace!("Future for notification already dropped");
+                        }
+                    }
+                }
+            } // TODO: add support for subscriptions
+        };
+        Ok(())
+    }
+
+    fn send_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
+        if let Err(_) = chan.send(value) {
+            trace!("Future for RPC call {:?} dropped already", id);
+        }
+    }
+
+    fn add_new_call(&mut self, id: Id, completion: oneshot::Sender<Result<JsonValue>>) {
+        self.pending_requests.insert(id, completion);
+    }
+
+    fn drive_transport(&mut self) -> Result<()> {
+        if self.fatal_error.is_none() {
+            self.transport_tx
+                .poll_complete()
+                .chain_err(|| ErrorKind::TransportError)?;
+        }
+        Ok(())
+    }
+}
+
+impl<Writer, Reader, TransportError> Future for Client<Writer, Reader, TransportError>
+where
+    Writer: Sink<SinkItem = String, SinkError = TransportError>,
+    Reader: Stream<Item = String, Error = TransportError>,
+    TransportError: std::error::Error + Send + 'static,
+{
+    type Item = ();
+    type Error = Error;
+
+
+    fn poll(&mut self) -> Result<Async<Self::Item>> {
+        if !self.should_shut_down() {
+            match self.handle_messages() {
+                Ok(_) => return Ok(Async::NotReady),
+                Err(err) => {
+                    if let &ErrorKind::Shutdown = err.kind() {
+                    } else {
+                        self.fatal_error = Some(err);
+                    }
+                }
+            }
+        };
+
+        if let Err(e) = self.drain_incoming_messages() {
+            trace!(
+                "Failed to drain incoming messages from transport whilst shutting down: {}",
+                e.description()
+            );
+        }
+
+        match self
+            .transport_tx
+            .close()
+            .chain_err(|| ErrorKind::TransportError)
+        {
+            // If the transport is done flushing without failing, return a Result of either
+            // Async::Ready(()) or the fatal error that was stored previously
+            Ok(Async::Ready(_)) => self
+                .fatal_error
+                .take()
+                .map(|e| Err(e))
+                .unwrap_or(Ok(Async::Ready(()))),
+            // If the transport is not done flushing without failing, neither is the client
+            Ok(_) => Ok(Async::NotReady),
+
+            // If trying to close the transport sink results in an error, the error has to be
+            // chained with the fatal error if it exists
+            Err(e) => match self.fatal_error.take() {
+                Some(fatal) => Err(Error::with_chain(e, fatal)),
+                _ => Err(e),
+            },
+        }
+    }
+}
+
+
+#[derive(Debug)]
+enum ClientCall {
+    RpcCall(String, Option<Params>, oneshot::Sender<Result<JsonValue>>),
+    Notification(String, Option<Params>, oneshot::Sender<Result<()>>),
+}
+
 
 /// Prepares a lazy `RpcRequest` with a given transport, method and parameters.
 /// The call is not sent to the transport until the returned `RpcRequest` is actually executed,
@@ -221,12 +592,12 @@ where
 {
     let id = Id::Num(transport.get_next_id());
     trace!("Serializing call to method \"{}\" with id {:?}", method, id);
-    let request_serialization_result =
-        serialize_request(id.clone(), method, params).chain_err(|| ErrorKind::SerializeError);
+    let request_serialization_result = serialize_method_request(id.clone(), method, params)
+        .chain_err(|| ErrorKind::SerializeError);
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
-            let transport_future = transport.send(request_raw);
+            let transport_future = transport.send(request_raw.into_bytes());
             RpcRequest(Ok(InnerRpcRequest::new(transport_future, id)))
         }
     }
@@ -234,27 +605,45 @@ where
 
 
 /// Creates a JSON-RPC 2.0 request to the given method with the given parameters.
-fn serialize_request<P>(
-    id: Id,
-    method: String,
-    params: P,
-) -> ::std::result::Result<Vec<u8>, serde_json::error::Error>
+fn serialize_method_request<P>(id: Id, method: String, params: P) -> Result<String>
 where
     P: serde::Serialize,
 {
-    let serialized_params = match serde_json::to_value(params)? {
-        JsonValue::Null => None,
-        JsonValue::Array(vec) => Some(Params::Array(vec)),
-        JsonValue::Object(obj) => Some(Params::Map(obj)),
-        value => Some(Params::Array(vec![value])),
-    };
+    let serialized_params = serialize_parameters(params)?;
     let method_call = MethodCall {
         jsonrpc: Some(Version::V2),
         method,
         params: serialized_params,
         id,
     };
-    serde_json::to_vec(&method_call)
+    serde_json::to_string(&method_call).chain_err(|| ErrorKind::SerializeError)
+}
+
+fn serialize_parameters<P>(params: P) -> Result<Option<Params>>
+where
+    P: serde::Serialize,
+{
+    let parameters = match serde_json::to_value(params).chain_err(|| ErrorKind::SerializeError)? {
+        JsonValue::Null => None,
+        JsonValue::Array(vec) => Some(Params::Array(vec)),
+        JsonValue::Object(obj) => Some(Params::Map(obj)),
+        value => Some(Params::Array(vec![value])),
+    };
+    Ok(parameters)
+}
+
+/// Creates a JSON-RPC 2.0 notification request to the given method with the given parameters.
+fn serialize_notification_request<P>(method: String, params: P) -> Result<String>
+where
+    P: serde::Serialize,
+{
+    let serialized_params = serialize_parameters(params)?;
+    let notification = Notification {
+        jsonrpc: Some(Version::V2),
+        method,
+        params: serialized_params,
+    };
+    serde_json::to_string(&notification).chain_err(|| ErrorKind::SerializeError)
 }
 
 
