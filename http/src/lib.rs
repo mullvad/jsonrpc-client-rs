@@ -426,10 +426,10 @@ impl HttpHandle {
     ) {
         let (tx, rx) = mpsc::channel(0);
         let sink = tx
-            .sink_map_err(|_| Error::from(ErrorKind::ClientCreatorError))
+            .sink_map_err(|_| Error::from(ErrorKind::TokioCoreError("Not listening for requests")))
             .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
         let rx = rx
-            .map_err(|_| Error::from(ErrorKind::ClientCreatorError))
+            .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
             .and_then(|bytes| {
                 future::result(String::from_utf8(bytes).chain_err(|| ErrorKind::InvalidResponse))
             });
