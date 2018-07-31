@@ -349,11 +349,11 @@ impl ClientHandle {
 /// messages with a server. This future has to be driven for the messages to be passed around. To
 /// send and receive messages, one should use the ClientHandle.
 #[derive(Debug)]
-    pub struct Client<Writer, Reader, TransportError>
+pub struct Client<Writer, Reader, TransportError>
 where
- Writer: Sink<SinkItem = String, SinkError = TransportError>,
- Reader: Stream<Item = String, Error = TransportError>,
- TransportError: std::error::Error + Send + 'static,
+    Writer: Sink<SinkItem = String, SinkError = TransportError>,
+    Reader: Stream<Item = String, Error = TransportError>,
+    TransportError: std::error::Error + Send + 'static,
 {
     // channels
     close_signal: CloseSignal,
@@ -374,11 +374,11 @@ where
 }
 
 
-impl<Writer, Reader, TransportError> Client<Writer, Reader, TransportError> 
+impl<Writer, Reader, TransportError> Client<Writer, Reader, TransportError>
 where
- Writer: Sink<SinkItem = String, SinkError = TransportError>,
- Reader: Stream<Item = String, Error = TransportError>,
- TransportError: std::error::Error + Send + 'static,
+    Writer: Sink<SinkItem = String, SinkError = TransportError>,
+    Reader: Stream<Item = String, Error = TransportError>,
+    TransportError: std::error::Error + Send + 'static,
 {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
@@ -505,11 +505,7 @@ where
             return Err(ErrorKind::InvalidVersion.into());
         };
         let (id, result): (Id, Result<JsonValue>) = match output {
-            Output::Success(RpcSuccess {
-                result,
-                id,
-                ..
-            }) => (id, Ok(result)),
+            Output::Success(RpcSuccess { result, id, .. }) => (id, Ok(result)),
             Output::Failure(RpcFailure { id, error, .. }) => {
                 (id, Err(ErrorKind::JsonRpcError(error).into()))
             }
@@ -579,8 +575,7 @@ where
                         }
                     }
                 }
-            }
-            // TODO: add support for subscriptions
+            } // TODO: add support for subscriptions
         };
         Ok(())
     }
@@ -620,11 +615,11 @@ where
     }
 }
 
-impl<Writer, Reader, TransportError> Future for Client<Writer,Reader, TransportError>
+impl<Writer, Reader, TransportError> Future for Client<Writer, Reader, TransportError>
 where
- Writer: Sink<SinkItem = String, SinkError = TransportError>,
- Reader: Stream<Item = String, Error = TransportError>,
- TransportError: std::error::Error + Send + 'static,
+    Writer: Sink<SinkItem = String, SinkError = TransportError>,
+    Reader: Stream<Item = String, Error = TransportError>,
+    TransportError: std::error::Error + Send + 'static,
 {
     type Item = ();
     type Error = Error;
