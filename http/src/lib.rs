@@ -84,7 +84,7 @@ extern crate native_tls;
 
 use futures::future::{self, Either, Select2};
 use futures::sync::{mpsc, oneshot};
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Future, Poll, Sink, Stream};
 pub use hyper::header;
 use hyper::{Client, Request, StatusCode, Uri};
 use jsonrpc_client_core::Transport;
@@ -114,6 +114,12 @@ error_chain! {
         RequestTimeout {
             description("Timeout while waiting for a request")
         }
+
+        /// Returned response was not UTF-8
+        BodyParseError {
+            description("Failed to parse response body as UTF-8")
+        }
+
         /// When there was an error in the Tokio Core.
         TokioCoreError(msg: &'static str) {
             description("Error with the Tokio Core")
@@ -268,6 +274,7 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         Ok(Self::build(request_tx))
     }
 
+
     fn build(request_tx: CoreSender) -> HttpTransport {
         HttpTransport {
             request_tx,
@@ -406,20 +413,31 @@ impl HttpHandle {
         request.set_body(body);
         request
     }
-}
 
-impl Transport for HttpHandle {
-    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
-    type Error = Error;
-
-    fn get_next_id(&mut self) -> u64 {
-        self.id.fetch_add(1, Ordering::SeqCst) as u64
+    /// Creates a sink and a stream that can indefinitely transfer RPC messages. Sink will accept
+    /// strings intended to be valid JSON and the stream will return strings which are the body of
+    /// the responses from the JSONRPC server. The resulting stream and sink pair is intended to be
+    /// used to construct jsonrpc_client_core::Client.
+    pub fn io_pair(
+        self,
+    ) -> (
+        impl Sink<SinkItem = String, SinkError = Error>,
+        impl Stream<Item = String, Error = Error>,
+    ) {
+        let (tx, rx) = mpsc::channel(0);
+        let sink = tx
+            .sink_map_err(|_| Error::from(ErrorKind::TokioCoreError("Not listening for requests")))
+            .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
+        let stream = rx
+            .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
+            .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::BodyParseError));
+        (sink, stream)
     }
 
-    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+    fn send_fut(&self, json_data: Vec<u8>) -> impl Future<Item = Vec<u8>, Error = Error> + Send {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
-        let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
+        future::result(self.request_tx.unbounded_send((request, response_tx)))
             .map_err(|e| {
                 Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
             })
@@ -431,8 +449,23 @@ impl Transport for HttpHandle {
                     )
                 })
             })
-            .and_then(future::result);
-        Box::new(future)
+            .and_then(|r| {
+                trace!("RECEIVED RESPONSE FROM HYPER - {:?}", r);
+                future::result(r)
+            })
+    }
+}
+
+impl Transport for HttpHandle {
+    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
+    type Error = Error;
+
+    fn get_next_id(&mut self) -> u64 {
+        self.id.fetch_add(1, Ordering::SeqCst) as u64
+    }
+
+    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+        Box::new(self.send_fut(json_data))
     }
 }
 
