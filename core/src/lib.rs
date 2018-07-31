@@ -351,8 +351,8 @@ impl ClientHandle {
 #[derive(Debug)]
     pub struct Client<Writer, Reader, TransportError>
 where
- Writer: Sink<SinkItem = Vec<u8>, SinkError = TransportError>,
- Reader: Stream<Item = Vec<u8>, Error = TransportError>,
+ Writer: Sink<SinkItem = String, SinkError = TransportError>,
+ Reader: Stream<Item = String, Error = TransportError>,
  TransportError: std::error::Error + Send + 'static,
 {
     // channels
@@ -364,7 +364,7 @@ where
     current_id: u64,
     shutting_down: bool,
     pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
-    pending_payload: Option<Vec<u8>>,
+    pending_payload: Option<String>,
     transport_error: bool,
 
     // transport
@@ -376,12 +376,12 @@ where
 
 impl<Writer, Reader, TransportError> Client<Writer, Reader, TransportError> 
 where
- Writer: Sink<SinkItem = Vec<u8>, SinkError = TransportError>,
- Reader: Stream<Item = Vec<u8>, Error = TransportError>,
+ Writer: Sink<SinkItem = String, SinkError = TransportError>,
+ Reader: Stream<Item = String, Error = TransportError>,
  TransportError: std::error::Error + Send + 'static,
 {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
-    /// sinks are expected to send and receive byte vectors which should hold exactly one JSON
+    /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error.
@@ -447,13 +447,13 @@ where
         Ok(())
     }
 
-    fn send_payload(&mut self, data: Vec<u8>) -> Result<()> {
+    fn send_payload(&mut self, json_string: String) -> Result<()> {
         if self.transport_error {
             return Err(ErrorKind::TransportError.into());
         }
         match self
             .transport_tx
-            .start_send(data)
+            .start_send(json_string)
             .chain_err(|| ErrorKind::TransportError)
         {
             Ok(AsyncSink::Ready) => Ok(()),
@@ -489,9 +489,9 @@ where
         }
     }
 
-    fn handle_payload(&mut self, payload: Vec<u8>) -> Result<()> {
+    fn handle_payload(&mut self, payload: String) -> Result<()> {
         use jsonrpc_core::types::Output;
-        let response: Output = serde_json::from_slice(&payload)
+        let response: Output = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
         self.handle_response(response)
     }
@@ -622,8 +622,8 @@ where
 
 impl<Writer, Reader, TransportError> Future for Client<Writer,Reader, TransportError>
 where
- Writer: Sink<SinkItem = Vec<u8>, SinkError = TransportError>,
- Reader: Stream<Item = Vec<u8>, Error = TransportError>,
+ Writer: Sink<SinkItem = String, SinkError = TransportError>,
+ Reader: Stream<Item = String, Error = TransportError>,
  TransportError: std::error::Error + Send + 'static,
 {
     type Item = ();
@@ -667,7 +667,7 @@ where
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
         Ok(request_raw) => {
-            let transport_future = transport.send(request_raw);
+            let transport_future = transport.send(request_raw.into_bytes());
             RpcRequest(Ok(InnerRpcRequest::new(transport_future, id)))
         }
     }
@@ -679,7 +679,7 @@ fn serialize_method_request<P>(
     id: Id,
     method: String,
     params: P,
-) -> ::std::result::Result<Vec<u8>, serde_json::error::Error>
+) -> ::std::result::Result<String, serde_json::error::Error>
 where
     P: serde::Serialize,
 {
@@ -695,7 +695,7 @@ where
         params: serialized_params,
         id,
     };
-    serde_json::to_vec(&method_call)
+    serde_json::to_string(&method_call)
 }
 
 fn serialize_parameters<P>(params: P) -> Result<Option<Params>>
@@ -715,7 +715,7 @@ where
 fn serialize_notification_request<P>(
     method: String,
     params: P,
-) -> ::std::result::Result<Vec<u8>, serde_json::error::Error>
+) -> ::std::result::Result<String, serde_json::error::Error>
 where
     P: serde::Serialize,
 {
@@ -730,7 +730,7 @@ where
         method,
         params: serialized_params,
     };
-    serde_json::to_vec(&notification)
+    serde_json::to_string(&notification)
 }
 
 
