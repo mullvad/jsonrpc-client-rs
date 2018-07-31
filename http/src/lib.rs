@@ -114,6 +114,12 @@ error_chain! {
         RequestTimeout {
             description("Timeout while waiting for a request")
         }
+
+        /// Returned response was not UTF-8
+        InvalidResponse {
+            description("Expected response to be UTF-8")
+        }
+
         /// When there was an error in the Tokio Core.
         TokioCoreError(msg: &'static str) {
             description("Error with the Tokio Core")
@@ -415,16 +421,18 @@ impl HttpHandle {
     pub fn io_pair(
         self,
     ) -> (
-        impl Sink<SinkItem = Vec<u8>, SinkError = Error>,
-        impl Stream<Item = Vec<u8>, Error = Error>,
+        impl Sink<SinkItem = String, SinkError = Error>,
+        impl Stream<Item = String, Error = Error>,
     ) {
         let (tx, rx) = mpsc::channel(0);
-        let sink = tx.sink_map_err(|_| Error::from(ErrorKind::ClientCreatorError))
-            .with(move |json_data| {
-                self.send_fut(json_data)
-            })
-            ;
-        let rx = rx.map_err(|_| Error::from(ErrorKind::ClientCreatorError));
+        let sink = tx
+            .sink_map_err(|_| Error::from(ErrorKind::ClientCreatorError))
+            .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
+        let rx = rx
+            .map_err(|_| Error::from(ErrorKind::ClientCreatorError))
+            .and_then(|bytes| {
+                future::result(String::from_utf8(bytes).chain_err(|| ErrorKind::InvalidResponse))
+            });
         (sink, rx)
     }
 
