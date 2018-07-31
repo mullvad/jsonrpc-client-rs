@@ -84,7 +84,7 @@ extern crate native_tls;
 
 use futures::future::{self, Either, Select2};
 use futures::sync::{mpsc, oneshot};
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Future, Poll, Sink, Stream};
 pub use hyper::header;
 use hyper::{Client, Request, StatusCode, Uri};
 use jsonrpc_client_core::Transport;
@@ -268,6 +268,7 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
         Ok(Self::build(request_tx))
     }
 
+
     fn build(request_tx: CoreSender) -> HttpTransport {
         HttpTransport {
             request_tx,
@@ -406,17 +407,28 @@ impl HttpHandle {
         request.set_body(body);
         request
     }
-}
 
-impl Transport for HttpHandle {
-    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
-    type Error = Error;
-
-    fn get_next_id(&mut self) -> u64 {
-        self.id.fetch_add(1, Ordering::SeqCst) as u64
+    /// Creates a sink and a stream that can indefinitely transfer RPC messages. Sink will accept
+    /// byte vectors intended to be valid JSON and the stream will return byte vectors which are
+    /// the body of the responses from the JSONRPC server. The resulting stream and sink pair is
+    /// intended to be used to construct jsonrpc_client_core::Client.
+    pub fn io_pair(
+        self,
+    ) -> (
+        impl Sink<SinkItem = Vec<u8>, SinkError = Error>,
+        impl Stream<Item = Vec<u8>, Error = Error>,
+    ) {
+        let (tx, rx) = mpsc::channel(0);
+        let sink = tx.sink_map_err(|_| Error::from(ErrorKind::ClientCreatorError))
+            .with(move |json_data| {
+                self.send_fut(json_data)
+            })
+            ;
+        let rx = rx.map_err(|_| Error::from(ErrorKind::ClientCreatorError));
+        (sink, rx)
     }
 
-    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+    fn send_fut(&self, json_data: Vec<u8>) -> impl Future<Item = Vec<u8>, Error = Error> + Send {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
         let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
@@ -431,8 +443,24 @@ impl Transport for HttpHandle {
                     )
                 })
             })
-            .and_then(future::result);
-        Box::new(future)
+            .and_then(|r| {
+                trace!("RECEIVED RESPONSE FROM HYPER - {:?}", r);
+                future::result(r)
+            });
+        future
+    }
+}
+
+impl Transport for HttpHandle {
+    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
+    type Error = Error;
+
+    fn get_next_id(&mut self) -> u64 {
+        self.id.fetch_add(1, Ordering::SeqCst) as u64
+    }
+
+    fn send(&self, json_data: Vec<u8>) -> Self::Future {
+        Box::new(self.send_fut(json_data))
     }
 }
 
