@@ -23,9 +23,9 @@ build_rpc_trait! {
 
 // Generate client struct with same API as server.
 jsonrpc_client!(pub struct MockRpcClient {
-    pub fn to_upper(&mut self, string: &str) -> RpcRequest<String>;
-    pub fn slow_to_upper(&mut self, string: &str, time: u64) -> RpcRequest<String>;
-    pub fn sleep(&mut self, time: u64) -> RpcRequest<()>;
+    pub fn to_upper(&mut self, string: &str) -> Future<String>;
+    pub fn slow_to_upper(&mut self, string: &str, time: u64) -> Future<String>;
+    pub fn sleep(&mut self, time: u64) -> Future<()>;
 });
 
 
