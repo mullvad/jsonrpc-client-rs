@@ -333,9 +333,8 @@ where
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
-    pub fn new(transport_tx: W, transport_rx: R, buffer_size: usize) -> (Self, ClientHandle) {
-        let (rpc_call_chan, rpc_call_rx) = mpsc::channel(buffer_size);
-
+    pub fn new(transport_tx: W, transport_rx: R) -> (Self, ClientHandle) {
+        let (rpc_call_chan, rpc_call_rx) = mpsc::channel(0);
         (
             Client {
                 // request channel
