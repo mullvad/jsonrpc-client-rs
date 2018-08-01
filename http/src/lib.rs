@@ -116,7 +116,7 @@ error_chain! {
         }
 
         /// Returned response was not UTF-8
-        BodyParseError {
+        ParseBodyError {
             description("Failed to parse response body as UTF-8")
         }
 
@@ -430,8 +430,8 @@ impl HttpHandle {
             .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
         let stream = rx
             .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
-            .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::BodyParseError));
-        (sink, stream)
+            .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::ParseBodyError));
+        (sink, streastream)
     }
 
     fn send_fut(&self, json_data: Vec<u8>) -> impl Future<Item = Vec<u8>, Error = Error> + Send {
