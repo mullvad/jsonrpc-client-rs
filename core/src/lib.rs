@@ -264,7 +264,7 @@ impl CloseSignal {
             Ok(Async::NotReady) => false || self.should_close,
             _ => true,
         };
-        should_close
+        self.should_close
     }
 }
 
@@ -305,7 +305,7 @@ impl ClientHandle {
             .flatten()
             .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
             .flatten()
-            .map_err(|e| e.into())
+            .from_err()
     }
 
 
