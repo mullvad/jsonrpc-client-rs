@@ -222,8 +222,6 @@ pub trait Transport {
     fn send(&self, json_data: Vec<u8>) -> Self::Future;
 }
 
-use std::sync::{Arc, Mutex};
-
 #[derive(Clone, Debug)]
 struct CloseHandle {
     tx: mpsc::UnboundedSender<()>,
@@ -285,15 +283,13 @@ impl ClientHandle {
     }
 
     /// Invokes an RPC and creates a future representing the RPC's result.
-    pub fn call_method<P, T, S>(
+    pub fn call_method<T>(
         &self,
-        method: S,
-        parameters: P,
+        method: impl Into<String>,
+        parameters: impl serde::Serialize,
     ) -> impl Future<Item = T, Error = Error>
     where
         T: serde::de::DeserializeOwned + Send,
-        P: serde::Serialize,
-        S: Into<String>,
     {
         let (tx, rx) = oneshot::channel();
 
@@ -309,7 +305,7 @@ impl ClientHandle {
             .flatten()
             .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
             .flatten()
-            .map_err(Into::into)
+            .map_err(|e| e.into())
     }
 
 
