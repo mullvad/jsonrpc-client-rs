@@ -87,7 +87,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future, Poll, Sink, Stream};
 pub use hyper::header;
 use hyper::{Client, Request, StatusCode, Uri};
-use jsonrpc_client_core::Transport;
+use jsonrpc_client_core::{Transport, Client as RpcClient, ClientHandle as RpcClientHandle};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -431,6 +431,12 @@ impl HttpHandle {
             .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
             .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::ParseBodyError));
         (sink, stream)
+    }
+
+    /// Constructs a jsonrpc_client_core::Client from the HTTP transport
+    pub fn into_client(self) -> (RpcClient<impl futures::Sink<SinkItem=String, SinkError=Error>, impl futures::Stream<Item=String, Error=Error>, Error>, RpcClientHandle) {
+        let (tx, rx) = self.io_pair();
+        RpcClient::new(tx, rx)
     }
 
     fn send_fut(&self, json_data: Vec<u8>) -> impl Future<Item = Vec<u8>, Error = Error> + Send {
