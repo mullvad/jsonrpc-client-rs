@@ -78,7 +78,6 @@ use serde_json::Value as JsonValue;
 
 
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -100,28 +99,24 @@ error_chain! {
         SerializeError {
             description("Unable to serialize the method parameters")
         }
+        /// Error when deserializing server response
+        DeserializeError {
+            description("Unable to deserialize response")
+        }
         /// Error while deserializing or parsing the response data.
         ResponseError(msg: &'static str) {
             description("Unable to deserialize the response into the desired type")
             display("Unable to deserialize the response: {}", msg)
         }
-
-        /// The server returned a response which with an incorrect version
+        /// The server returned a response with an incorrect version
         InvalidVersion {
             description("Method call returned a response that was not specified as JSON-RPC 2.0")
         }
-
         /// Error when trying to send a new mesage to the server because the client is already
         /// shut down.
         Shutdown {
             description("RPC Client already shut down")
         }
-
-        /// Error when deserializing server response
-        DeserializeError(error: serde_json::Error) {
-            description("Unable to deserialize response")
-        }
-
         /// The request was replied to, but with a JSON-RPC 2.0 error.
         JsonRpcError(error: jsonrpc_core::Error) {
             description("Method call returned JSON-RPC 2.0 error")
@@ -258,7 +253,7 @@ struct CloseSignal {
 }
 
 impl CloseSignal {
-    pub fn new() -> (CloseSignal) {
+    pub fn new() -> CloseSignal {
         let (tx, rx) = oneshot::channel();
         CloseSignal {
             handle: CloseHandle::new(tx),
@@ -269,6 +264,7 @@ impl CloseSignal {
     pub fn handle(&self) -> CloseHandle {
         self.handle.clone()
     }
+
     pub fn poll(&mut self) -> bool {
         match self.rx.poll() {
             // the only case where the shutdown signal hasn't been sent is when polling the
@@ -294,14 +290,15 @@ impl ClientHandle {
     }
 
     /// Invokes an RPC and creates a future representing the RPC's result.
-    pub fn call_method<P, T>(
+    pub fn call_method<P, T, S>(
         &self,
-        method: String,
+        method: S,
         parameters: P,
     ) -> impl Future<Item = T, Error = Error>
     where
         T: serde::de::DeserializeOwned + Send,
         P: serde::Serialize,
+        S: Into<String>
     {
         let (tx, rx) = oneshot::channel();
 
@@ -310,14 +307,14 @@ impl ClientHandle {
         future::result(serialize_parameters(parameters))
             .and_then(|params| {
                 rpc_chan
-                    .send(ClientCall::RpcCall(method, params, tx))
+                    .send(ClientCall::RpcCall(method.into(), params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
             })
             .then(|_| rx.map_err(|_| ErrorKind::Shutdown))
             .flatten()
-            .map(|r| serde_json::from_value(r).map_err(|e| ErrorKind::DeserializeError(e)))
+            .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
             .flatten()
-            .map_err(|e| Error::from(e))
+            .map_err(Into::into)
     }
 
 
@@ -345,15 +342,33 @@ impl ClientHandle {
     }
 }
 
-/// Client is a future that takes an arbitrary transport sink and stream pair and handles JSONRPC
-/// messages with a server. This future has to be driven for the messages to be passed around. To
-/// send and receive messages, one should use the ClientHandle.
 #[derive(Debug)]
-pub struct Client<Writer, Reader, TransportError>
+struct IdGenerator {
+    next_id: u64
+}
+
+impl IdGenerator {
+    fn new() -> IdGenerator {
+        IdGenerator{ next_id: 1 }
+    }
+
+    fn next(&mut self) -> Id {
+        let id = Id::Num(self.next_id);
+        self.next_id += 1;
+        id
+    }
+}
+
+
+/// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
+/// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
+/// To send and receive messages, one should use the ClientHandle.
+#[derive(Debug)]
+pub struct Client<W, R, E>
 where
-    Writer: Sink<SinkItem = String, SinkError = TransportError>,
-    Reader: Stream<Item = String, Error = TransportError>,
-    TransportError: std::error::Error + Send + 'static,
+    W: Sink<SinkItem = String, SinkError = E>,
+    R: Stream<Item = String, Error = E>,
+    E: std::error::Error + Send + 'static,
 {
     // channels
     close_signal: CloseSignal,
@@ -361,50 +376,50 @@ where
     rpc_call_tx: mpsc::Sender<ClientCall>,
 
     // state
-    current_id: u64,
+    id_generator: IdGenerator,
     shutting_down: bool,
     pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
     pending_payload: Option<String>,
     transport_error: bool,
 
     // transport
-    transport_tx: Writer,
-    transport_rx: Reader,
-    _transport_err: PhantomData<TransportError>,
+    transport_tx: W,
+    transport_rx: R,
 }
 
-
-impl<Writer, Reader, TransportError> Client<Writer, Reader, TransportError>
+impl<W, R, E> Client<W, R, E>
 where
-    Writer: Sink<SinkItem = String, SinkError = TransportError>,
-    Reader: Stream<Item = String, Error = TransportError>,
-    TransportError: std::error::Error + Send + 'static,
+    W: Sink<SinkItem = String, SinkError = E>,
+    R: Stream<Item = String, Error = E>,
+    E: std::error::Error + Send + 'static,
 {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error.
-    pub fn new(transport_tx: Writer, transport_rx: Reader, buffer_size: usize) -> Self {
+    pub fn new(transport_tx: W, transport_rx: R, buffer_size: usize) -> Self {
         let (rpc_call_tx, rpc_call_rx) = mpsc::channel(buffer_size);
 
         let close_signal = CloseSignal::new();
-        let current_id = 0;
 
 
         Client {
-            close_signal: close_signal,
-            rpc_call_tx: rpc_call_tx,
-            rpc_call_rx: rpc_call_rx,
+            // channels
+            close_signal,
+            rpc_call_tx,
+            rpc_call_rx,
 
-            current_id: current_id,
+            // state
+            id_generator: IdGenerator::new(),
             pending_payload: None,
             shutting_down: false,
             transport_error: false,
             pending_requests: HashMap::new(),
-            transport_tx: transport_tx,
-            transport_rx: transport_rx,
-            _transport_err: PhantomData,
+
+            // transport
+            transport_tx,
+            transport_rx,
         }
     }
 
@@ -413,13 +428,14 @@ where
     }
 
     fn poll_self(&mut self) -> Result<Async<()>> {
-        if !self.should_shut_down() {
-            if let Err(e) = self.handle_messages() {
-                trace!("failed to handle messages - {:?}", e);
-            } else {
-                return Ok(Async::NotReady);
+        let err = if !self.should_shut_down() {
+            match self.handle_messages() {
+                Err(e) => Some(e),
+                Ok(_) =>  { return Ok(Async::NotReady) },
             }
-        }
+        } else {
+            None
+        };
 
         if let Err(e) = self.drain_incoming_messages() {
             trace!(
@@ -428,9 +444,14 @@ where
             );
         }
 
-        self.transport_tx
+        let shutdown = self.transport_tx
             .close()
-            .chain_err(|| ErrorKind::TransportError)
+            .chain_err(|| ErrorKind::TransportError);
+        match err {
+            None => shutdown,
+            // need to preserve the original error
+            Some(e) => shutdown.map_err(|shutdown_err| e.chain_err(|| shutdown_err))
+        }
     }
 
     fn handle_messages(&mut self) -> Result<()> {
@@ -549,10 +570,8 @@ where
     fn handle_call(&mut self, call: ClientCall) -> Result<()> {
         match call {
             ClientCall::RpcCall(method, parameters, completion) => {
-                let new_id = self.next_id();
-                match serialize_method_request(new_id.clone(), method, parameters)
-                    .chain_err(|| ErrorKind::SerializeError)
-                {
+                let new_id = self.id_generator.next();
+                match serialize_method_request(new_id.clone(), method, parameters) {
                     Ok(payload) => {
                         self.add_new_call(new_id, completion);
                         self.send_payload(payload)?;
@@ -563,9 +582,7 @@ where
                 };
             }
             ClientCall::Notification(method, parameters, completion) => {
-                match serialize_notification_request(method, parameters)
-                    .chain_err(|| ErrorKind::SerializeError)
-                {
+                match serialize_notification_request(method, parameters) {
                     Ok(payload) => {
                         self.send_payload(payload)?;
                     }
@@ -578,11 +595,6 @@ where
             } // TODO: add support for subscriptions
         };
         Ok(())
-    }
-
-    fn next_id(&mut self) -> Id {
-        self.current_id += 1;
-        Id::Num(self.current_id)
     }
 
     fn send_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
@@ -670,27 +682,18 @@ where
 
 
 /// Creates a JSON-RPC 2.0 request to the given method with the given parameters.
-fn serialize_method_request<P>(
-    id: Id,
-    method: String,
-    params: P,
-) -> ::std::result::Result<String, serde_json::error::Error>
+fn serialize_method_request<P>(id: Id, method: String, params: P) -> Result<String>
 where
     P: serde::Serialize,
 {
-    let serialized_params = match serde_json::to_value(params)? {
-        JsonValue::Null => None,
-        JsonValue::Array(vec) => Some(Params::Array(vec)),
-        JsonValue::Object(obj) => Some(Params::Map(obj)),
-        value => Some(Params::Array(vec![value])),
-    };
+    let serialized_params = serialize_parameters(params)?;
     let method_call = MethodCall {
         jsonrpc: Some(Version::V2),
         method,
         params: serialized_params,
         id,
     };
-    serde_json::to_string(&method_call)
+    serde_json::to_string(&method_call).chain_err(|| ErrorKind::SerializeError)
 }
 
 fn serialize_parameters<P>(params: P) -> Result<Option<Params>>
@@ -706,26 +709,18 @@ where
     Ok(parameters)
 }
 
-/// Creates a JSON-RPC 2.0 request to the given method with the given parameters.
-fn serialize_notification_request<P>(
-    method: String,
-    params: P,
-) -> ::std::result::Result<String, serde_json::error::Error>
+/// Creates a JSON-RPC 2.0 notification request to the given method with the given parameters.
+fn serialize_notification_request<P>(method: String, params: P) -> Result<String>
 where
     P: serde::Serialize,
 {
-    let serialized_params = match serde_json::to_value(params)? {
-        JsonValue::Null => None,
-        JsonValue::Array(vec) => Some(Params::Array(vec)),
-        JsonValue::Object(obj) => Some(Params::Map(obj)),
-        value => Some(Params::Array(vec![value])),
-    };
+    let serialized_params = serialize_parameters(params)?;
     let notification = Notification {
         jsonrpc: Some(Version::V2),
         method,
         params: serialized_params,
     };
-    serde_json::to_string(&notification)
+    serde_json::to_string(&notification).chain_err(|| ErrorKind::SerializeError)
 }
 
 
