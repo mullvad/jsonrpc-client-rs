@@ -222,66 +222,13 @@ pub trait Transport {
     fn send(&self, json_data: Vec<u8>) -> Self::Future;
 }
 
-#[derive(Clone, Debug)]
-struct CloseHandle {
-    tx: mpsc::UnboundedSender<()>,
-}
-
-impl CloseHandle {
-    pub fn close(&self) {
-        if let Err(_) = self.tx.unbounded_send(()) {
-            trace!("Shutdown signal receiver dropped already")
-        }
-    }
-}
-
-
-#[derive(Debug)]
-struct CloseSignal {
-    handle: CloseHandle,
-    rx: mpsc::UnboundedReceiver<()>,
-    should_close: bool,
-}
-
-impl CloseSignal {
-    pub fn new() -> CloseSignal {
-        let (tx, rx) = mpsc::unbounded();
-        CloseSignal {
-            handle: CloseHandle { tx },
-            rx: rx,
-            should_close: false,
-        }
-    }
-
-    pub fn handle(&self) -> CloseHandle {
-        self.handle.clone()
-    }
-
-    pub fn poll(&mut self) -> bool {
-        self.should_close = match self.rx.poll() {
-            // the only case where the shutdown signal hasn't been sent is when polling the
-            // receiving end returns an Ok(Async::NotReady)
-            Ok(Async::NotReady) => false || self.should_close,
-            _ => true,
-        };
-        self.should_close
-    }
-}
-
-
 /// This handle allows one to create futures for RPC invocations and to close a running Client.
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
     rpc_call_chan: mpsc::Sender<ClientCall>,
-    close_handle: CloseHandle,
 }
 
 impl ClientHandle {
-    /// Stops a running Client future
-    pub fn close(self) {
-        self.close_handle.close()
-    }
-
     /// Invokes an RPC and creates a future representing the RPC's result.
     pub fn call_method<T>(
         &self,
@@ -361,17 +308,15 @@ where
     R: Stream<Item = String, Error = E>,
     E: std::error::Error + Send + 'static,
 {
-    // channels
-    close_signal: CloseSignal,
+    // request channel
     rpc_call_rx: mpsc::Receiver<ClientCall>,
-    rpc_call_tx: mpsc::Sender<ClientCall>,
 
     // state
     id_generator: IdGenerator,
     shutting_down: bool,
     pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
     pending_payload: Option<String>,
-    transport_error: bool,
+    fatal_error: Option<Error>,
 
     // transport
     transport_tx: W,
@@ -388,36 +333,37 @@ where
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
-    /// will resolve without an error.
-    pub fn new(transport_tx: W, transport_rx: R, buffer_size: usize) -> Self {
-        let (rpc_call_tx, rpc_call_rx) = mpsc::channel(buffer_size);
+    /// will resolve without an error. The client will resolve once all of it's handles and
+    /// corresponding futures get resolved.
+    pub fn new(transport_tx: W, transport_rx: R, buffer_size: usize) -> (Self, ClientHandle) {
+        let (rpc_call_chan, rpc_call_rx) = mpsc::channel(buffer_size);
 
-        let close_signal = CloseSignal::new();
+        (
+            Client {
+                // request channel
+                rpc_call_rx,
 
+                // state
+                id_generator: IdGenerator::new(),
+                pending_payload: None,
+                shutting_down: false,
+                fatal_error: None,
+                pending_requests: HashMap::new(),
 
-        Client {
-            // channels
-            close_signal,
-            rpc_call_tx,
-            rpc_call_rx,
-
-            // state
-            id_generator: IdGenerator::new(),
-            pending_payload: None,
-            shutting_down: false,
-            transport_error: false,
-            pending_requests: HashMap::new(),
-
-            // transport
-            transport_tx,
-            transport_rx,
-        }
+                // transport
+                transport_tx,
+                transport_rx,
+            },
+            ClientHandle { rpc_call_chan },
+        )
     }
 
     fn should_shut_down(&mut self) -> bool {
-        self.close_signal.poll() || self.shutting_down || self.transport_error
+        self.fatal_error.is_some() || self.shutting_down
     }
 
+    /// Handles incoming RPC requests from handles, drains incoming responses from the transport
+    /// stream and drives the transport sink.
     fn handle_messages(&mut self) -> Result<()> {
         // try send a leftover payload
         if let Some(payload) = self.pending_payload.take() {
@@ -433,17 +379,14 @@ where
     }
 
     fn send_payload(&mut self, json_string: String) -> Result<()> {
-        ensure!(!self.transport_error, ErrorKind::TransportError);
+        ensure!(self.fatal_error.is_none(), ErrorKind::TransportError);
         match self.transport_tx.start_send(json_string) {
             Ok(AsyncSink::Ready) => Ok(()),
             Ok(AsyncSink::NotReady(payload)) => {
                 self.pending_payload = Some(payload);
                 Ok(())
             }
-            Err(e) => {
-                self.transport_error = true;
-                Err(e).chain_err(|| ErrorKind::TransportError)
-            }
+            Err(e) => Err(e).chain_err(|| ErrorKind::TransportError),
         }
     }
 
@@ -508,7 +451,9 @@ where
                 }
                 Ok(Async::Ready(None)) => {
                     // technically unreachable as we always hold on to the sender
-                    unreachable!("No sender channels remain");
+                    trace!("All client handles and futures dropped, shutting down");
+                    self.shutting_down = true;
+                    return Err(ErrorKind::Shutdown.into());
                 }
                 Err(_) => {
                     warn!("received error whilst trying to receive rpc calls");
@@ -560,22 +505,12 @@ where
     }
 
     fn drive_transport(&mut self) -> Result<()> {
-        if !self.transport_error {
+        if self.fatal_error.is_none() {
             self.transport_tx
                 .poll_complete()
                 .chain_err(|| ErrorKind::TransportError)?;
         }
         Ok(())
-    }
-
-
-    /// Returns a Handle to this future that is able to create Request futures and stop the Client
-    /// future.
-    pub fn handle(&self) -> ClientHandle {
-        ClientHandle {
-            rpc_call_chan: self.rpc_call_tx.clone(),
-            close_handle: self.close_signal.handle(),
-        }
     }
 }
 
@@ -590,13 +525,16 @@ where
 
 
     fn poll(&mut self) -> Result<Async<Self::Item>> {
-        let err = if !self.should_shut_down() {
+        if !self.should_shut_down() {
             match self.handle_messages() {
                 Ok(_) => return Ok(Async::NotReady),
-                Err(e) => Some(e),
+                Err(err) => {
+                    if let &ErrorKind::Shutdown = err.kind() {
+                    } else {
+                        self.fatal_error = Some(err);
+                    }
+                }
             }
-        } else {
-            None
         };
 
         if let Err(e) = self.drain_incoming_messages() {
@@ -606,14 +544,27 @@ where
             );
         }
 
-        let shutdown = self
+        match self
             .transport_tx
             .close()
-            .chain_err(|| ErrorKind::TransportError);
-        match err {
-            None => shutdown,
-            // need to preserve the original error
-            Some(e) => shutdown.map_err(|shutdown_err| e.chain_err(|| shutdown_err)),
+            .chain_err(|| ErrorKind::TransportError)
+        {
+            // If the transport is done flushing without failing, return a Result of either
+            // Async::Ready(()) or the fatal error that was stored previously
+            Ok(Async::Ready(_)) => self
+                .fatal_error
+                .take()
+                .map(|e| Err(e))
+                .unwrap_or(Ok(Async::Ready(()))),
+            // If the transport is not done flushing without failing, neither is the client
+            Ok(_) => Ok(Async::NotReady),
+
+            // If trying to close the transport sink results in an error, the error has to be
+            // chained with the fatal error if it exists
+            Err(e) => match self.fatal_error.take() {
+                Some(fatal) => Err(Error::with_chain(e, fatal)),
+                _ => Err(e),
+            },
         }
     }
 }
