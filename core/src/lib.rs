@@ -249,7 +249,7 @@ impl CloseSignal {
     pub fn new() -> CloseSignal {
         let (tx, rx) = mpsc::unbounded();
         CloseSignal {
-            handle: CloseHandle{tx},
+            handle: CloseHandle { tx },
             rx: rx,
             should_close: false,
         }
@@ -293,7 +293,7 @@ impl ClientHandle {
     where
         T: serde::de::DeserializeOwned + Send,
         P: serde::Serialize,
-        S: Into<String>
+        S: Into<String>,
     {
         let (tx, rx) = oneshot::channel();
 
@@ -339,12 +339,12 @@ impl ClientHandle {
 
 #[derive(Debug)]
 struct IdGenerator {
-    next_id: u64
+    next_id: u64,
 }
 
 impl IdGenerator {
     fn new() -> IdGenerator {
-        IdGenerator{ next_id: 1 }
+        IdGenerator { next_id: 1 }
     }
 
     fn next(&mut self) -> Id {
@@ -422,33 +422,6 @@ where
         self.close_signal.poll() || self.shutting_down || self.transport_error
     }
 
-    fn poll_self(&mut self) -> Result<Async<()>> {
-        let err = if !self.should_shut_down() {
-            match self.handle_messages() {
-                Err(e) => Some(e),
-                Ok(_) =>  { return Ok(Async::NotReady) },
-            }
-        } else {
-            None
-        };
-
-        if let Err(e) = self.drain_incoming_messages() {
-            trace!(
-                "Failed to drain incoming messages from transport whilst shutting down: {}",
-                e.description()
-            );
-        }
-
-        let shutdown = self.transport_tx
-            .close()
-            .chain_err(|| ErrorKind::TransportError);
-        match err {
-            None => shutdown,
-            // need to preserve the original error
-            Some(e) => shutdown.map_err(|shutdown_err| e.chain_err(|| shutdown_err))
-        }
-    }
-
     fn handle_messages(&mut self) -> Result<()> {
         // try send a leftover payload
         if let Some(payload) = self.pending_payload.take() {
@@ -464,14 +437,8 @@ where
     }
 
     fn send_payload(&mut self, json_string: String) -> Result<()> {
-        if self.transport_error {
-            return Err(ErrorKind::TransportError.into());
-        }
-        match self
-            .transport_tx
-            .start_send(json_string)
-            .chain_err(|| ErrorKind::TransportError)
-        {
+        ensure!(!self.transport_error, ErrorKind::TransportError);
+        match self.transport_tx.start_send(json_string) {
             Ok(AsyncSink::Ready) => Ok(()),
             Ok(AsyncSink::NotReady(payload)) => {
                 self.pending_payload = Some(payload);
@@ -479,7 +446,7 @@ where
             }
             Err(e) => {
                 self.transport_error = true;
-                Err(e)
+                Err(e).chain_err(|| ErrorKind::TransportError)
             }
         }
     }
@@ -506,18 +473,13 @@ where
     }
 
     fn handle_payload(&mut self, payload: String) -> Result<()> {
-        use jsonrpc_core::types::Output;
         let response: Output = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
         self.handle_response(response)
     }
 
     fn handle_response(&mut self, output: Output) -> Result<()> {
-        if !output
-            .version()
-            .map(|version| version == jsonrpc_core::types::Version::V2)
-            .unwrap_or(false)
-        {
+        if output.version() != Some(jsonrpc_core::types::Version::V2) {
             return Err(ErrorKind::InvalidVersion.into());
         };
         let (id, result): (Id, Result<JsonValue>) = match output {
@@ -536,7 +498,8 @@ where
 
     fn drain_calls(&mut self) -> Result<()> {
         loop {
-            // can only drain incoming RPC calls if RPC transport is ready
+            // can only drain incoming RPC calls if the transport is ready to send a payload.  If
+            // there's a pending payload present, it must be because the transport
             if self.pending_payload.is_some() {
                 return Ok(());
             }
@@ -549,12 +512,10 @@ where
                 }
                 Ok(Async::Ready(None)) => {
                     // technically unreachable as we always hold on to the sender
-                    trace!("all message senders are down, shutting down as well");
-                    self.shutting_down = true;
-                    return Ok(());
+                    unreachable!("No sender channels remain");
                 }
                 Err(_) => {
-                    trace!("received error whilst trying to receive rpc calls");
+                    warn!("received error whilst trying to receive rpc calls");
                     self.shutting_down = true;
                     return Ok(());
                 }
@@ -633,7 +594,31 @@ where
 
 
     fn poll(&mut self) -> Result<Async<Self::Item>> {
-        self.poll_self()
+        let err = if !self.should_shut_down() {
+            match self.handle_messages() {
+                Ok(_) => return Ok(Async::NotReady),
+                Err(e) => Some(e),
+            }
+        } else {
+            None
+        };
+
+        if let Err(e) = self.drain_incoming_messages() {
+            trace!(
+                "Failed to drain incoming messages from transport whilst shutting down: {}",
+                e.description()
+            );
+        }
+
+        let shutdown = self
+            .transport_tx
+            .close()
+            .chain_err(|| ErrorKind::TransportError);
+        match err {
+            None => shutdown,
+            // need to preserve the original error
+            Some(e) => shutdown.map_err(|shutdown_err| e.chain_err(|| shutdown_err)),
+        }
     }
 }
 
