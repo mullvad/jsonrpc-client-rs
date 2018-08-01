@@ -258,7 +258,7 @@ impl CloseSignal {
     }
 
     pub fn poll(&mut self) -> bool {
-        let should_close = match self.rx.poll() {
+        self.should_close = match self.rx.poll() {
             // the only case where the shutdown signal hasn't been sent is when polling the
             // receiving end returns an Ok(Async::NotReady)
             Ok(Async::NotReady) => false || self.should_close,
