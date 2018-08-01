@@ -212,7 +212,7 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     /// HttpTransportBuilder::with_client(|handle: &Handle| {
     ///     Ok(hyper::Client::configure().keep_alive(false).build(handle)) as Result<_, io::Error>
     /// }).standalone()
-    ///     .unwrap();
+    /// .unwrap();
     /// # }
     /// ```
     pub fn with_client(client_creator: C) -> HttpTransportBuilder<C> {
@@ -360,8 +360,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
                 } else {
                     future::err(ErrorKind::HttpError(response.status()).into())
                 }
-            })
-            .and_then(|response: hyper::Response| response.body().concat2().from_err())
+            }).and_then(|response: hyper::Response| response.body().concat2().from_err())
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
                 if let Err(_) = response_tx.send(response_result) {
@@ -422,16 +421,14 @@ impl Transport for HttpHandle {
         let future = future::result(self.request_tx.unbounded_send((request, response_tx)))
             .map_err(|e| {
                 Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
-            })
-            .and_then(move |_| {
+            }).and_then(move |_| {
                 response_rx.map_err(|e| {
                     Error::with_chain(
                         e,
                         ErrorKind::TokioCoreError("Died without returning response"),
                     )
                 })
-            })
-            .and_then(future::result);
+            }).and_then(future::result);
         Box::new(future)
     }
 }
@@ -459,7 +456,7 @@ mod tests {
         HttpTransportBuilder::with_client(|handle: &Handle| {
             Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
         }).standalone()
-            .unwrap();
+        .unwrap();
     }
 
     #[test]
@@ -468,7 +465,7 @@ mod tests {
             Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
                 as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
         }).standalone()
-            .unwrap_err();
+        .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
             kind => panic!("invalid error kind response: {:?}", kind),
