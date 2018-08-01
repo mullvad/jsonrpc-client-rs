@@ -226,21 +226,13 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug)]
 struct CloseHandle {
-    tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    tx: mpsc::UnboundedSender<()>,
 }
 
 impl CloseHandle {
-    fn new(tx: oneshot::Sender<()>) -> CloseHandle {
-        CloseHandle {
-            tx: Arc::new(Mutex::new(Some(tx))),
-        }
-    }
-
-    pub fn close(self) {
-        if let Some(tx) = self.tx.lock().unwrap().take() {
-            if let Err(_) = tx.send(()) {
-                trace!("Shutdown signal receiver dropped already")
-            }
+    pub fn close(&self) {
+        if let Err(_) = self.tx.unbounded_send(()) {
+            trace!("Shutdown signal receiver dropped already")
         }
     }
 }
@@ -249,15 +241,17 @@ impl CloseHandle {
 #[derive(Debug)]
 struct CloseSignal {
     handle: CloseHandle,
-    rx: oneshot::Receiver<()>,
+    rx: mpsc::UnboundedReceiver<()>,
+    should_close: bool,
 }
 
 impl CloseSignal {
     pub fn new() -> CloseSignal {
-        let (tx, rx) = oneshot::channel();
+        let (tx, rx) = mpsc::unbounded();
         CloseSignal {
-            handle: CloseHandle::new(tx),
+            handle: CloseHandle{tx},
             rx: rx,
+            should_close: false,
         }
     }
 
@@ -266,12 +260,13 @@ impl CloseSignal {
     }
 
     pub fn poll(&mut self) -> bool {
-        match self.rx.poll() {
+        let should_close = match self.rx.poll() {
             // the only case where the shutdown signal hasn't been sent is when polling the
             // receiving end returns an Ok(Async::NotReady)
-            Ok(Async::NotReady) => false,
+            Ok(Async::NotReady) => false || self.should_close,
             _ => true,
-        }
+        };
+        should_close
     }
 }
 
