@@ -435,7 +435,8 @@ where
     fn drain_calls(&mut self) -> Result<()> {
         loop {
             // can only drain incoming RPC calls if the transport is ready to send a payload.  If
-            // there's a pending payload present, it must be because the transport
+            // there's a pending payload present, it must be because the transport wasn't ready to
+            // start sending it previously.
             if self.pending_payload.is_some() {
                 return Ok(());
             }
@@ -448,7 +449,6 @@ where
                     continue;
                 }
                 Ok(Async::Ready(None)) => {
-                    // technically unreachable as we always hold on to the sender
                     trace!("All client handles and futures dropped, shutting down");
                     return Err(ErrorKind::Shutdown.into());
                 }
