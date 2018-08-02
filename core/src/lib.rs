@@ -483,6 +483,7 @@ where
             ClientCall::Notification(method, parameters, completion) => {
                 match serialize_notification_request(method, &parameters) {
                     Ok(payload) => {
+                        completion.send(Ok(()));
                         self.send_payload(payload)?;
                     }
                     Err(e) => {
