@@ -67,10 +67,10 @@ extern crate serde;
 extern crate serde_json;
 
 use futures::future::{self, Future};
+use futures::stream::Peekable;
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, AsyncSink};
 use futures::{Sink, Stream};
-use futures::stream::Peekable;
 use jsonrpc_core::types::{
     Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Success as RpcSuccess,
     Version,
@@ -225,6 +225,7 @@ pub trait Transport {
 
 /// This handle allows one to create futures for RPC invocations. For the requests to ever be
 /// resolved, the Client future has to be driven.
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
     rpc_call_chan: mpsc::Sender<ClientCall>,
@@ -249,8 +250,7 @@ impl ClientHandle {
                 rpc_chan
                     .send(ClientCall::RpcCall(method.into(), params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            })
-            .then(|_| rx.map_err(|_| ErrorKind::Shutdown))
+            }).then(|_| rx.map_err(|_| ErrorKind::Shutdown))
             .flatten()
             .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
             .flatten()
@@ -276,8 +276,7 @@ impl ClientHandle {
                 rpc_chan
                     .send(ClientCall::Notification(method, params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            })
-            .then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
+            }).then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
             .flatten()
     }
 }
@@ -446,7 +445,7 @@ where
                 Ok(Async::Ready(None)) => true,
                 _ => false,
             };
-            if self.pending_payload.is_some() && !call_stream_ended{
+            if self.pending_payload.is_some() && !call_stream_ended {
                 return Ok(());
             }
 
@@ -532,12 +531,10 @@ where
         if !self.should_shut_down() {
             match self.handle_messages() {
                 Ok(_) => return Ok(Async::NotReady),
-                Err(err) => match err.kind() {
-                    &ErrorKind::Shutdown => (),
-                    _ => self.fatal_error = Some(err),
-                },
+                Err(Error(ErrorKind::Shutdown, _)) => self.shutting_down = true,
+                Err(e) => self.fatal_error = Some(e),
             }
-        };
+        }
 
         if let Err(e) = self.drain_incoming_messages() {
             trace!(
