@@ -403,8 +403,7 @@ where
                 }
                 Async::Ready(None) => {
                     trace!("transport receiver shut down, shutting down as well");
-                    self.shutting_down = true;
-                    return Ok(());
+                    return Err(ErrorKind::Shutdown.into());
                 }
                 Async::NotReady => return Ok(()),
             }
