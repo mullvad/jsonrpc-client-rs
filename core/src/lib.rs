@@ -483,7 +483,9 @@ where
             ClientCall::Notification(method, parameters, completion) => {
                 match serialize_notification_request(method, &parameters) {
                     Ok(payload) => {
-                        completion.send(Ok(()));
+                        if let Err(_) = completion.send(Ok(())) {
+                            trace!("future for notification dopped already");
+                        }
                         self.send_payload(payload)?;
                     }
                     Err(e) => {
@@ -500,6 +502,37 @@ where
     fn send_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
         if let Err(_) = chan.send(value) {
             trace!("Future for RPC call {:?} dropped already", id);
+        }
+    }
+
+    fn handle_shutdown(&mut self) -> futures::Poll<(), Error> {
+        if let Err(e) = self.drain_incoming_messages() {
+            trace!(
+                "Failed to drain incoming messages from transport whilst shutting down: {}",
+                e.description()
+            );
+        }
+        match self
+            .transport_tx
+            .close()
+            .chain_err(|| ErrorKind::TransportError)
+        {
+            // If the transport is done flushing without failing, return a Result of either
+            // Async::Ready(()) or the fatal error that was stored previously
+            Ok(Async::Ready(())) => self
+                .fatal_error
+                .take()
+                .map(|e| Err(e))
+                .unwrap_or(Ok(Async::Ready(()))),
+            // If the transport is not done flushing without failing, neither is the client
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+
+            // If trying to close the transport sink results in an error, the error has to be
+            // chained with the fatal error if it exists
+            Err(e) => match self.fatal_error.take() {
+                Some(fatal) => Err(Error::with_chain(e, fatal)),
+                None => Err(e),
+            },
         }
     }
 
@@ -530,41 +563,12 @@ where
     fn poll(&mut self) -> Result<Async<Self::Item>> {
         if !self.should_shut_down() {
             match self.handle_messages() {
-                Ok(_) => return Ok(Async::NotReady),
+                Ok(()) => return Ok(Async::NotReady),
                 Err(Error(ErrorKind::Shutdown, _)) => self.shutting_down = true,
                 Err(e) => self.fatal_error = Some(e),
             }
         }
-
-        if let Err(e) = self.drain_incoming_messages() {
-            trace!(
-                "Failed to drain incoming messages from transport whilst shutting down: {}",
-                e.description()
-            );
-        }
-
-        match self
-            .transport_tx
-            .close()
-            .chain_err(|| ErrorKind::TransportError)
-        {
-            // If the transport is done flushing without failing, return a Result of either
-            // Async::Ready(()) or the fatal error that was stored previously
-            Ok(Async::Ready(_)) => self
-                .fatal_error
-                .take()
-                .map(|e| Err(e))
-                .unwrap_or(Ok(Async::Ready(()))),
-            // If the transport is not done flushing without failing, neither is the client
-            Ok(_) => Ok(Async::NotReady),
-
-            // If trying to close the transport sink results in an error, the error has to be
-            // chained with the fatal error if it exists
-            Err(e) => match self.fatal_error.take() {
-                Some(fatal) => Err(Error::with_chain(e, fatal)),
-                _ => Err(e),
-            },
-        }
+        self.handle_shutdown()
     }
 }
 
