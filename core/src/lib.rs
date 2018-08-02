@@ -550,11 +550,11 @@ where
     }
 }
 
-impl<Writer, Reader, TransportError> Future for Client<Writer, Reader, TransportError>
+impl<W, R, E> Future for Client<W, R, E>
 where
-    Writer: Sink<SinkItem = String, SinkError = TransportError>,
-    Reader: Stream<Item = String, Error = TransportError>,
-    TransportError: std::error::Error + Send + 'static,
+    W: Sink<SinkItem = String, SinkError = E>,
+    R: Stream<Item = String, Error = E>,
+    E: std::error::Error + Send + 'static,
 {
     type Item = ();
     type Error = Error;
