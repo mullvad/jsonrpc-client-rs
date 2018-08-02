@@ -70,6 +70,7 @@ use futures::future::{self, Future};
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, AsyncSink};
 use futures::{Sink, Stream};
+use futures::stream::Peekable;
 use jsonrpc_core::types::{
     Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Success as RpcSuccess,
     Version,
@@ -310,7 +311,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     // request channel
-    rpc_call_rx: mpsc::Receiver<ClientCall>,
+    rpc_call_rx: Peekable<mpsc::Receiver<ClientCall>>,
 
     // state
     id_generator: IdGenerator,
@@ -341,7 +342,7 @@ where
         (
             Client {
                 // request channel
-                rpc_call_rx,
+                rpc_call_rx: rpc_call_rx.peekable(),
 
                 // state
                 id_generator: IdGenerator::new(),
@@ -439,8 +440,13 @@ where
         loop {
             // can only drain incoming RPC calls if the transport is ready to send a payload.  If
             // there's a pending payload present, it must be because the transport wasn't ready to
-            // start sending it previously.
-            if self.pending_payload.is_some() {
+            // start sending it previously. However, if the incoming calls stream is finished,
+            // don't return early, as the future has to be shut down.
+            let call_stream_ended = match self.rpc_call_rx.peek() {
+                Ok(Async::Ready(None)) => true,
+                _ => false,
+            };
+            if self.pending_payload.is_some() && !call_stream_ended{
                 return Ok(());
             }
 
