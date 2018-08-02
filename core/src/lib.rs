@@ -225,6 +225,7 @@ pub trait Transport {
 
 /// This handle allows one to create futures for RPC invocations. For the requests to ever be
 /// resolved, the Client future has to be driven.
+#[must_use]
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
     rpc_call_chan: mpsc::Sender<ClientCall>,
@@ -532,12 +533,10 @@ where
         if !self.should_shut_down() {
             match self.handle_messages() {
                 Ok(_) => return Ok(Async::NotReady),
-                Err(err) => match err.kind() {
-                    &ErrorKind::Shutdown => (),
-                    _ => self.fatal_error = Some(err),
-                },
+                Err(Error(ErrorKind::Shutdown, _)) => (),
+                Err(e) => self.fatal_error = Some(e),
             }
-        };
+        }
 
         if let Err(e) = self.drain_incoming_messages() {
             trace!(
