@@ -112,7 +112,7 @@ error_chain! {
         InvalidVersion {
             description("Method call returned a response that was not specified as JSON-RPC 2.0")
         }
-        /// Error when trying to send a new mesage to the server because the client is already
+        /// Error when trying to send a new message to the server because the client is already
         /// shut down.
         Shutdown {
             description("RPC Client already shut down")
@@ -222,7 +222,8 @@ pub trait Transport {
     fn send(&self, json_data: Vec<u8>) -> Self::Future;
 }
 
-/// This handle allows one to create futures for RPC invocations and to close a running Client.
+/// This handle allows one to create futures for RPC invocations. For the requests to ever be
+/// resolved, the Client future has to be driven.
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
     rpc_call_chan: mpsc::Sender<ClientCall>,
@@ -233,10 +234,10 @@ impl ClientHandle {
     pub fn call_method<T>(
         &self,
         method: impl Into<String>,
-        parameters: impl serde::Serialize,
+        parameters: &impl serde::Serialize,
     ) -> impl Future<Item = T, Error = Error>
     where
-        T: serde::de::DeserializeOwned + Send,
+        T: serde::de::DeserializeOwned,
     {
         let (tx, rx) = oneshot::channel();
 
@@ -247,7 +248,8 @@ impl ClientHandle {
                 rpc_chan
                     .send(ClientCall::RpcCall(method.into(), params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            }).then(|_| rx.map_err(|_| ErrorKind::Shutdown))
+            })
+            .then(|_| rx.map_err(|_| ErrorKind::Shutdown))
             .flatten()
             .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
             .flatten()
@@ -268,12 +270,13 @@ impl ClientHandle {
 
         let rpc_chan = self.rpc_call_chan.clone();
 
-        future::result(serialize_parameters(parameters))
+        future::result(serialize_parameters(&parameters))
             .and_then(|params| {
                 rpc_chan
                     .send(ClientCall::Notification(method, params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            }).then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
+            })
+            .then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
             .flatten()
     }
 }
@@ -463,7 +466,7 @@ where
         match call {
             ClientCall::RpcCall(method, parameters, completion) => {
                 let new_id = self.id_generator.next();
-                match serialize_method_request(new_id.clone(), method, parameters) {
+                match serialize_method_request(new_id.clone(), method, &parameters) {
                     Ok(payload) => {
                         self.add_new_call(new_id, completion);
                         self.send_payload(payload)?;
@@ -474,7 +477,7 @@ where
                 };
             }
             ClientCall::Notification(method, parameters, completion) => {
-                match serialize_notification_request(method, parameters) {
+                match serialize_notification_request(method, &parameters) {
                     Ok(payload) => {
                         self.send_payload(payload)?;
                     }
@@ -523,12 +526,10 @@ where
         if !self.should_shut_down() {
             match self.handle_messages() {
                 Ok(_) => return Ok(Async::NotReady),
-                Err(err) => {
-                    if let &ErrorKind::Shutdown = err.kind() {
-                    } else {
-                        self.fatal_error = Some(err);
-                    }
-                }
+                Err(err) => match err.kind() {
+                    &ErrorKind::Shutdown => (),
+                    _ => self.fatal_error = Some(err),
+                },
             }
         };
 
@@ -591,7 +592,7 @@ where
 {
     let id = Id::Num(transport.get_next_id());
     trace!("Serializing call to method \"{}\" with id {:?}", method, id);
-    let request_serialization_result = serialize_method_request(id.clone(), method, params)
+    let request_serialization_result = serialize_method_request(id.clone(), method, &params)
         .chain_err(|| ErrorKind::SerializeError);
     match request_serialization_result {
         Err(e) => RpcRequest(Err(Some(e))),
@@ -604,10 +605,11 @@ where
 
 
 /// Creates a JSON-RPC 2.0 request to the given method with the given parameters.
-fn serialize_method_request<P>(id: Id, method: String, params: P) -> Result<String>
-where
-    P: serde::Serialize,
-{
+fn serialize_method_request(
+    id: Id,
+    method: String,
+    params: &impl serde::Serialize,
+) -> Result<String> {
     let serialized_params = serialize_parameters(params)?;
     let method_call = MethodCall {
         jsonrpc: Some(Version::V2),
@@ -618,10 +620,7 @@ where
     serde_json::to_string(&method_call).chain_err(|| ErrorKind::SerializeError)
 }
 
-fn serialize_parameters<P>(params: P) -> Result<Option<Params>>
-where
-    P: serde::Serialize,
-{
+fn serialize_parameters(params: &impl serde::Serialize) -> Result<Option<Params>> {
     let parameters = match serde_json::to_value(params).chain_err(|| ErrorKind::SerializeError)? {
         JsonValue::Null => None,
         JsonValue::Array(vec) => Some(Params::Array(vec)),
@@ -632,10 +631,10 @@ where
 }
 
 /// Creates a JSON-RPC 2.0 notification request to the given method with the given parameters.
-fn serialize_notification_request<P>(method: String, params: P) -> Result<String>
-where
-    P: serde::Serialize,
-{
+fn serialize_notification_request(
+    method: String,
+    params: &impl serde::Serialize,
+) -> Result<String> {
     let serialized_params = serialize_parameters(params)?;
     let notification = Notification {
         jsonrpc: Some(Version::V2),
