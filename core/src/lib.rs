@@ -517,23 +517,22 @@ where
             .close()
             .chain_err(|| ErrorKind::TransportError)
         {
-            // If the transport is done flushing without failing, return a Result of either
-            // Async::Ready(()) or the fatal error that was stored previously
-            Ok(Async::Ready(())) => self
-                .fatal_error
-                .take()
-                .map(|e| Err(e))
-                .unwrap_or(Ok(Async::Ready(()))),
-            // If the transport is not done flushing without failing, neither is the client
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-
-            // If trying to close the transport sink results in an error, the error has to be
-            // chained with the fatal error if it exists
-            Err(e) => match self.fatal_error.take() {
-                Some(fatal) => Err(Error::with_chain(e, fatal)),
-                None => Err(e),
-            },
+            Ok(Async::NotReady) => {
+                return Ok(Async::NotReady);
+            }
+            Err(e) => {
+                warn!(
+                    "Encountered error whilst shutting down client: {}",
+                    e.description()
+                );
+            }
+            _ => (),
         }
+
+        self.fatal_error
+            .take()
+            .map(|e| Err(e))
+            .unwrap_or(Ok(Async::Ready(())))
     }
 
     fn add_new_call(&mut self, id: Id, completion: oneshot::Sender<Result<JsonValue>>) {
