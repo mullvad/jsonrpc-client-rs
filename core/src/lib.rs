@@ -370,11 +370,11 @@ where
             self.send_payload(payload)?;
         }
         // drain incoming payload
-        self.drain_incoming_messages()?;
+        self.poll_transport_rx()?;
         // drain incoming rpc requests, only if the writing pipe is ready
-        self.drain_calls()?;
+        self.poll_rpc_requests()?;
         // poll transport tx to drive sending
-        self.drive_transport()?;
+        self.poll_transport_tx()?;
         Ok(())
     }
 
@@ -390,7 +390,7 @@ where
         }
     }
 
-    fn drain_incoming_messages(&mut self) -> Result<()> {
+    fn poll_transport_rx(&mut self) -> Result<()> {
         loop {
             match self
                 .transport_rx
@@ -398,7 +398,7 @@ where
                 .chain_err(|| ErrorKind::TransportError)?
             {
                 Async::Ready(Some(new_payload)) => {
-                    self.handle_payload(new_payload)?;
+                    self.handle_transport_tx_payload(new_payload)?;
                     continue;
                 }
                 Async::Ready(None) => {
@@ -410,7 +410,7 @@ where
         }
     }
 
-    fn handle_payload(&mut self, payload: String) -> Result<()> {
+    fn handle_transport_tx_payload(&mut self, payload: String) -> Result<()> {
         let response: Output = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
         self.handle_response(response)
@@ -428,13 +428,13 @@ where
         };
 
         match self.pending_requests.remove(&id) {
-            Some(completion_chan) => Self::send_response(&id, completion_chan, result),
+            Some(completion_chan) => Self::send_rpc_response(&id, completion_chan, result),
             None => trace!("Received response with an invalid id {:?}", id),
         };
         Ok(())
     }
 
-    fn drain_calls(&mut self) -> Result<()> {
+    fn poll_rpc_requests(&mut self) -> Result<()> {
         loop {
             // can only drain incoming RPC calls if the transport is ready to send a payload.  If
             // there's a pending payload present, it must be because the transport wasn't ready to
@@ -452,7 +452,7 @@ where
             match self.rpc_call_rx.poll() {
                 Ok(Async::NotReady) => return Ok(()),
                 Ok(Async::Ready(Some(call))) => {
-                    self.handle_call(call)?;
+                    self.handle_rpc_request(call)?;
                     continue;
                 }
                 Ok(Async::Ready(None)) => {
@@ -466,7 +466,7 @@ where
         }
     }
 
-    fn handle_call(&mut self, call: ClientCall) -> Result<()> {
+    fn handle_rpc_request(&mut self, call: ClientCall) -> Result<()> {
         match call {
             ClientCall::RpcCall(method, parameters, completion) => {
                 let new_id = self.id_generator.next();
@@ -476,7 +476,7 @@ where
                         self.send_payload(payload)?;
                     }
                     Err(err) => {
-                        Self::send_response(&new_id, completion, Err(err));
+                        Self::send_rpc_response(&new_id, completion, Err(err));
                     }
                 };
             }
@@ -499,14 +499,14 @@ where
         Ok(())
     }
 
-    fn send_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
+    fn send_rpc_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
         if let Err(_) = chan.send(value) {
             trace!("Future for RPC call {:?} dropped already", id);
         }
     }
 
     fn handle_shutdown(&mut self) -> futures::Poll<(), Error> {
-        if let Err(e) = self.drain_incoming_messages() {
+        if let Err(e) = self.poll_transport_rx() {
             trace!(
                 "Failed to drain incoming messages from transport whilst shutting down: {}",
                 e.description()
@@ -540,7 +540,7 @@ where
         self.pending_requests.insert(id, completion);
     }
 
-    fn drive_transport(&mut self) -> Result<()> {
+    fn poll_transport_tx(&mut self) -> Result<()> {
         if self.fatal_error.is_none() {
             self.transport_tx
                 .poll_complete()
