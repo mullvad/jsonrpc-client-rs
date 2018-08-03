@@ -398,7 +398,7 @@ where
                 .chain_err(|| ErrorKind::TransportError)?
             {
                 Async::Ready(Some(new_payload)) => {
-                    self.handle_transport_tx_payload(new_payload)?;
+                    self.handle_transport_rx_payload(new_payload)?;
                     continue;
                 }
                 Async::Ready(None) => {
@@ -410,7 +410,7 @@ where
         }
     }
 
-    fn handle_transport_tx_payload(&mut self, payload: String) -> Result<()> {
+    fn handle_transport_rx_payload(&mut self, payload: String) -> Result<()> {
         let response: Output = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
         self.handle_response(response)
