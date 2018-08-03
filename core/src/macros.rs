@@ -32,13 +32,12 @@ macro_rules! jsonrpc_client {
             $(
                 $(#[$attr])*
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
-                    -> impl $crate::futures::Future<Item = $return_ty, Error = $crate::Error> + 'static
+                    -> impl $crate::Future<Item = $return_ty, Error = $crate::Error> + 'static
                 {
-                    use futures::sync::oneshot;
                     let method = String::from(stringify!($method));
                     let raw_params = expand_params!($($arg_name,)*);
                     let params = $crate::serialize_parameters(&raw_params);
-                    let (tx, rx) = oneshot::channel();
+                    let (tx, rx) = $crate::oneshot::channel();
                     let client_call = params.map(|p| $crate::ClientCall::RpcCall(method, p, tx));
                     $selff.client.send_client_call(client_call, rx)
                 }

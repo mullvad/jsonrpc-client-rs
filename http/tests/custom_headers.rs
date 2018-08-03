@@ -15,7 +15,6 @@ use hyper::{Request, Response, StatusCode};
 use jsonrpc_client_http::header::{ContentLength, ContentType, Host};
 use tokio_service::Service;
 
-use jsonrpc_client_core::Transport;
 use jsonrpc_client_http::{HttpHandle, HttpTransport};
 
 #[test]

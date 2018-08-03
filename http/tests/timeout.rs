@@ -25,7 +25,6 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use futures::future::{Either, Future};
-use jsonrpc_client_core::Transport;
 use jsonrpc_client_http::{ErrorKind, HttpTransport};
 use jsonrpc_http_server::hyper::server::Http;
 use tokio_core::reactor::{Core, Timeout};
@@ -48,10 +47,11 @@ fn long_request_should_timeout() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = MockRpcClient::new(transport);
+    let (json_client, client_handle) = transport.into_client();
+    let mut client = MockRpcClient::new(client_handle);
 
     let rpc_future = client.slow_to_upper("HARD string TAKES too LONG", 10_000);
-    let result = rpc_future.wait();
+    let result = json_client.map(|_| ()).join(rpc_future).wait();
 
     assert!(result.is_err());
 }
@@ -67,12 +67,20 @@ fn short_request_should_succeed() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = MockRpcClient::new(transport);
+    let (json_client, client_handle) = transport.into_client();
+    let json_client_future = json_client;
+    let mut client = MockRpcClient::new(client_handle);
 
     let rpc_future = client.to_upper("FAST sHoRt strIng");
-    let result = rpc_future.wait().unwrap();
+    let result = json_client_future
+        .map(|_| "wrong".to_string())
+        .select(rpc_future)
+        .wait();
 
-    assert_eq!("FAST SHORT STRING", result);
+    match result.as_ref() {
+        Ok((msg, _)) => assert_eq!(msg, "FAST SHORT STRING"),
+        _ => panic!("did not receive expected response"),
+    };
 }
 
 #[test]

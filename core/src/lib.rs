@@ -65,9 +65,11 @@ extern crate serde;
 #[cfg_attr(test, macro_use)]
 extern crate serde_json;
 
-use futures::future::{self, Future};
+use futures::future;
 use futures::stream::Peekable;
-use futures::sync::{mpsc, oneshot};
+use futures::sync::mpsc;
+pub use futures::sync::oneshot;
+pub use futures::Future;
 use futures::{Async, AsyncSink};
 use futures::{Sink, Stream};
 use jsonrpc_core::types::{
@@ -135,11 +137,11 @@ impl ClientHandle {
     /// Invokes an RPC and creates a future representing the RPC's result.
     pub fn call_method<T>(
         &self,
-        method: impl Into<String>,
+        method: impl Into<String> + 'static,
         parameters: &impl serde::Serialize,
-    ) -> impl Future<Item = T, Error = Error>
+    ) -> impl Future<Item = T, Error = Error> + 'static
     where
-        T: serde::de::DeserializeOwned,
+        T: serde::de::DeserializeOwned + 'static,
     {
         let (tx, rx) = oneshot::channel();
 
@@ -518,7 +520,8 @@ fn serialize_method_request(
     serde_json::to_string(&method_call).chain_err(|| ErrorKind::SerializeError)
 }
 
-fn serialize_parameters(params: &impl serde::Serialize) -> Result<Option<Params>> {
+/// Serializes parameters for JSON-RPC 2.0 methods and notifications
+pub fn serialize_parameters(params: &impl serde::Serialize) -> Result<Option<Params>> {
     let parameters = match serde_json::to_value(params).chain_err(|| ErrorKind::SerializeError)? {
         JsonValue::Null => None,
         JsonValue::Array(vec) => Some(Params::Array(vec)),

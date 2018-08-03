@@ -46,7 +46,9 @@ fn localhost_ping_pong() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = MockRpcClient::new(transport);
+    let (json_client, client_handle) = transport.into_client();
+    core.handle().spawn(json_client.map_err(|_| ()));
+    let mut client = MockRpcClient::new(client_handle);
 
     // Just calling the method gives back a `RpcRequest`, which is a future
     // that can be used to execute the actual RPC call.
@@ -72,7 +74,9 @@ fn dropped_rpc_request_should_not_crash_transport() {
         .unwrap()
         .handle(&uri)
         .unwrap();
-    let mut client = MockRpcClient::new(transport);
+    let (json_client, client_handle) = transport.into_client();
+    core.handle().spawn(json_client.map_err(|_| ()));
+    let mut client = MockRpcClient::new(client_handle);
 
     let rpc = client.sleep(5).map_err(|e| e.to_string());
     let timeout = Timeout::new(Duration::from_millis(100), &core.handle()).unwrap();
