@@ -157,10 +157,9 @@ impl ClientHandle {
             .from_err()
     }
 
-    // This function exists exclusively to be used from `jsonrpc_clientv2!` macro to deal with
-    // lifetime errors that occur when using impl trait.
-    #[allow(unused)]
-    fn send_client_call<T: serde::de::DeserializeOwned + Send + Sized>(
+    /// Send arbitrary RPC call to Client. Primarily intended to be used from macro
+    /// `jsonrpc_client!`.
+    pub fn send_client_call<T: serde::de::DeserializeOwned + Send + Sized>(
         &self,
         client_call: Result<ClientCall>,
         rx: oneshot::Receiver<Result<JsonValue>>,
@@ -492,9 +491,13 @@ where
 }
 
 
+/// A client call is an operation that the Client can execute with a JSON-RPC 2.0 server.
+/// Any client handle can execute these against the corresponding RPC server.
 #[derive(Debug)]
-enum ClientCall {
+pub enum ClientCall {
+    /// Invoke an RPC
     RpcCall(String, Option<Params>, oneshot::Sender<Result<JsonValue>>),
+    /// Send a notification
     Notification(String, Option<Params>, oneshot::Sender<Result<()>>),
 }
 
