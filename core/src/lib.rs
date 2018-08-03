@@ -257,6 +257,26 @@ impl ClientHandle {
             .from_err()
     }
 
+    // This function exists exclusively to be used from `jsonrpc_clientv2!` macro to deal with
+    // lifetime errors that occur when using impl trait.
+    #[allow(unused)]
+    fn send_client_call<T: serde::de::DeserializeOwned + Send + Sized>(
+        &self,
+        client_call: Result<ClientCall>,
+        rx: oneshot::Receiver<Result<JsonValue>>,
+    ) -> impl Future<Item = T, Error = Error> {
+        let rpc_chan = self.rpc_call_chan.clone();
+
+        future::result(client_call)
+            .and_then(|call| rpc_chan.send(call).map_err(|_| ErrorKind::Shutdown.into()))
+            .then(|_| {
+                rx.map_err(|_| ErrorKind::Shutdown)
+                    .flatten()
+                    .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
+            }).flatten()
+            .from_err()
+    }
+
 
     /// Sends a notificaiton to the Server.
     pub fn send_notification<P, T>(
@@ -728,44 +748,6 @@ mod tests {
     }
 
     jsonrpc_client!(pub struct TestRpcClient {
-        pub fn ping(&mut self, arg0: &str) -> RpcRequest<JsonValue>;
+        pub fn ping(&mut self, arg0: &str) -> JsonValue;
     });
-
-    #[test]
-    fn echo() {
-        let mut client = TestRpcClient::new(EchoTransport);
-        let result = client.ping("Hello").call().unwrap();
-        if let JsonValue::Object(map) = result {
-            assert_eq!(Some(&JsonValue::from("2.0")), map.get("jsonrpc"));
-            assert_eq!(Some(&JsonValue::from(1)), map.get("id"));
-            assert_eq!(Some(&JsonValue::from("ping")), map.get("method"));
-            assert_eq!(Some(&JsonValue::from(vec!["Hello"])), map.get("params"));
-            assert_eq!(4, map.len());
-        } else {
-            panic!("Invalid response type: {:?}", result);
-        }
-    }
-
-    #[test]
-    fn invalid_request() {
-        let mut client = TestRpcClient::new(InvalidRequestTransport);
-        let error = client.ping("").call().unwrap_err();
-        if let &ErrorKind::JsonRpcError(ref json_error) = error.kind() {
-            use jsonrpc_core::ErrorCode;
-            assert_eq!(ErrorCode::InvalidRequest, json_error.code);
-            assert_eq!("This was an invalid request", json_error.message);
-            assert_eq!(Some(json!{[1, 2, 3]}), json_error.data);
-        } else {
-            panic!("Wrong error kind");
-        }
-    }
-
-    #[test]
-    fn transport_error() {
-        let mut client = TestRpcClient::new(ErrorTransport);
-        match client.ping("").call().unwrap_err().kind() {
-            &ErrorKind::TransportError => (),
-            _ => panic!("Wrong error kind"),
-        }
-    }
 }

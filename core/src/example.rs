@@ -12,14 +12,14 @@ jsonrpc_client!(
     pub struct ExampleRpcClient {
         /// A method without any arguments and with no return value. Can still of course have
         /// lots of side effects on the server where it executes.
-        pub fn nullary(&mut self) -> RpcRequest<()>;
+        pub fn nullary(&mut self) -> ();
 
         /// Send a string to the server and it will presumably echo it back.
-        pub fn echo(&mut self, input: &str) -> RpcRequest<String>;
+        pub fn echo(&mut self, input: &str) -> String;
 
         /// Example RPC method named "concat" that takes a `String` and an unsigned integer and
         /// returns a `String`. From the name one could guess it will concatenate the two
         /// arguments. But that of course depends on the server where this call is sent.
-        pub fn concat(&mut self, arg0: String, arg1: u64) -> RpcRequest<String>;
+        pub fn concat(&mut self, arg0: String, arg1: u64) -> String;
     }
 );
