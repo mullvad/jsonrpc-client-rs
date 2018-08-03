@@ -15,7 +15,7 @@ macro_rules! jsonrpc_client {
         pub struct $struct_name:ident {$(
             $(#[$attr:meta])*
             pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
-                -> $return_ty:ty;
+                -> Future<$return_ty:ty>;
         )*}
     ) => (
         $(#[$struct_attr])*

@@ -34,7 +34,7 @@
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number.
-//!     pub fn fizz_buzz(&mut self, number: u64) -> RpcRequest<String>;
+//!     pub fn fizz_buzz(&mut self, number: u64) -> Future<String>;
 //! });
 //!
 //! fn main() {
@@ -43,9 +43,9 @@
 //!         .handle("http://api.fizzbuzzexample.org/rpc/")
 //!         .unwrap();
 //!     let mut client = FizzBuzzClient::new(transport_handle);
-//!     let result1 = client.fizz_buzz(3).call().unwrap();
-//!     let result2 = client.fizz_buzz(4).call().unwrap();
-//!     let result3 = client.fizz_buzz(5).call().unwrap();
+//!     let result1 = client.fizz_buzz(3).wait().unwrap();
+//!     let result2 = client.fizz_buzz(4).wait().unwrap();
+//!     let result3 = client.fizz_buzz(5).wait().unwrap();
 //!
 //!     // Should print "fizz 4 buzz" if the server implemented the service correctly
 //!     println!("{} {} {}", result1, result2, result3);
@@ -62,7 +62,6 @@ extern crate jsonrpc_core;
 #[macro_use]
 extern crate log;
 extern crate serde;
-#[cfg_attr(test, macro_use)]
 extern crate serde_json;
 
 use futures::future;
@@ -161,6 +160,7 @@ impl ClientHandle {
 
     /// Send arbitrary RPC call to Client. Primarily intended to be used from macro
     /// `jsonrpc_client!`.
+    #[doc(hidden)]
     pub fn send_client_call<T: serde::de::DeserializeOwned + Send + Sized>(
         &self,
         client_call: Result<ClientCall>,
