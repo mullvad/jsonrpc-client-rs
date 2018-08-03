@@ -87,9 +87,9 @@ use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future, Poll, Sink, Stream};
 pub use hyper::header;
 use hyper::{Client, Request, StatusCode, Uri};
-use jsonrpc_client_core::{Client as RpcClient, ClientHandle as RpcClientHandle, Transport};
+use jsonrpc_client_core::{Client as RpcClient, ClientHandle as RpcClientHandle};
 use std::str::FromStr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -465,19 +465,6 @@ impl HttpHandle {
                 trace!("RECEIVED RESPONSE FROM HYPER - {:?}", r);
                 future::result(r)
             })
-    }
-}
-
-impl Transport for HttpHandle {
-    type Future = Box<Future<Item = Vec<u8>, Error = Self::Error> + Send>;
-    type Error = Error;
-
-    fn get_next_id(&mut self) -> u64 {
-        self.id.fetch_add(1, Ordering::SeqCst) as u64
-    }
-
-    fn send(&self, json_data: Vec<u8>) -> Self::Future {
-        Box::new(self.send_fut(json_data))
     }
 }
 
