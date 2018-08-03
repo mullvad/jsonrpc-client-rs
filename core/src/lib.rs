@@ -494,15 +494,3 @@ fn serialize_notification_request(
     };
     serde_json::to_string(&notification).chain_err(|| ErrorKind::SerializeError)
 }
-
-trait Transport<E: std::error::Error + Send>: Sized {
-    type Tx: Sink<SinkItem = String, SinkError = E>;
-    type Rx: Stream<Item = String, Error = E>;
-
-    fn io_pair(self) -> (Self::Tx, Self::Rx);
-
-    fn jsonrpc_client(self) -> (Client<Self::Tx, Self::Rx, E>, ClientHandle) {
-        let (tx, rx) = self.io_pair();
-        Client::new(tx, rx)
-    }
-}
