@@ -49,7 +49,7 @@
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number, as a future.
-//!     pub fn fizz_buzz(&mut self, number: u64) -> String;
+//!     pub fn fizz_buzz(&mut self, number: u64) -> Future<String>;
 //! });
 //!
 //! fn main() {
