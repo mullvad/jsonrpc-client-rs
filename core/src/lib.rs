@@ -140,22 +140,14 @@ impl ClientHandle {
         parameters: &impl serde::Serialize,
     ) -> impl Future<Item = T, Error = Error> + 'static
     where
-        T: serde::de::DeserializeOwned + 'static,
+        T: serde::de::DeserializeOwned + Send + 'static,
     {
         let (tx, rx) = oneshot::channel();
+        let client = self.clone();
 
-        let rpc_chan = self.rpc_call_chan.clone();
-
-        future::result(serialize_parameters(parameters))
-            .and_then(|params| {
-                rpc_chan
-                    .send(ClientCall::RpcCall(method.into(), params, tx))
-                    .map_err(|_| ErrorKind::Shutdown.into())
-            }).then(|_| rx.map_err(|_| ErrorKind::Shutdown))
-            .flatten()
-            .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
-            .flatten()
-            .from_err()
+        future::result(serialize_parameters(parameters)).and_then(move |params| {
+            client.send_client_call(Ok(ClientCall::RpcCall(method.into(), params, tx)), rx)
+        })
     }
 
     /// Send arbitrary RPC call to Client. Primarily intended to be used from macro
@@ -170,11 +162,9 @@ impl ClientHandle {
 
         future::result(client_call)
             .and_then(|call| rpc_chan.send(call).map_err(|_| ErrorKind::Shutdown.into()))
-            .then(|_| {
-                rx.map_err(|_| ErrorKind::Shutdown)
-                    .flatten()
-                    .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
-            }).flatten()
+            .and_then(|_| rx.map_err(|_| ErrorKind::Shutdown).flatten())
+            .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
+            .flatten()
             .from_err()
     }
 
@@ -183,11 +173,8 @@ impl ClientHandle {
     pub fn send_notification<P, T>(
         &self,
         method: String,
-        parameters: P,
-    ) -> impl Future<Item = (), Error = Error>
-    where
-        P: serde::Serialize,
-    {
+        parameters: &impl serde::Serialize,
+    ) -> impl Future<Item = (), Error = Error> {
         let (tx, rx) = oneshot::channel();
 
         let rpc_chan = self.rpc_call_chan.clone();
@@ -356,25 +343,14 @@ where
     }
 
     fn poll_rpc_requests(&mut self) -> Result<()> {
-        loop {
-            // can only drain incoming RPC calls if the transport is ready to send a payload.  If
-            // there's a pending payload present, it must be because the transport wasn't ready to
-            // start sending it previously. However, if the incoming calls stream is finished,
-            // don't return early, as the future has to be shut down.
-            let call_stream_ended = match self.rpc_call_rx.peek() {
-                Ok(Async::Ready(None)) => true,
-                _ => false,
-            };
-            if self.pending_payload.is_some() && !call_stream_ended {
-                return Ok(());
-            }
-
+        // Process new client requests if the transport is ready to send new ones, or if the client
+        // channel is shut down - then we just shut down.
+        while self.pending_payload.is_none() && !self.rpc_channel_finished()? {
             // There's no pending payload, so new RPC requests can be processed.
             match self.rpc_call_rx.poll() {
                 Ok(Async::NotReady) => return Ok(()),
                 Ok(Async::Ready(Some(call))) => {
                     self.handle_rpc_request(call)?;
-                    continue;
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("All client handles and futures dropped, shutting down");
@@ -385,6 +361,7 @@ where
                 }
             }
         }
+        Ok(())
     }
 
     fn handle_rpc_request(&mut self, call: ClientCall) -> Result<()> {
@@ -396,8 +373,8 @@ where
                         self.add_new_call(new_id, completion);
                         self.send_payload(payload)?;
                     }
-                    Err(err) => {
-                        Self::send_rpc_response(&new_id, completion, Err(err));
+                    Err(e) => {
+                        Self::send_rpc_response(&new_id, completion, Err(e));
                     }
                 };
             }
@@ -418,6 +395,13 @@ where
             } // TODO: add support for subscriptions
         };
         Ok(())
+    }
+
+    fn rpc_channel_finished(&mut self) -> Result<bool> {
+        match self.rpc_call_rx.peek().map_err(|_| ErrorKind::Shutdown)? {
+            Async::Ready(None) => Ok(true),
+            _ => Ok(false),
+        }
     }
 
     fn send_rpc_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
