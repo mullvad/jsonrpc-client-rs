@@ -65,7 +65,6 @@ extern crate serde;
 extern crate serde_json;
 
 use futures::future;
-use futures::stream::Peekable;
 use futures::sync::mpsc;
 pub use futures::sync::oneshot;
 pub use futures::Future;
@@ -218,7 +217,7 @@ where
     E: std::error::Error + Send + 'static,
 {
     // request channel
-    rpc_call_rx: Peekable<mpsc::Receiver<ClientCall>>,
+    rpc_call_rx: mpsc::Receiver<ClientCall>,
 
     // state
     id_generator: IdGenerator,
@@ -249,7 +248,7 @@ where
         (
             Client {
                 // request channel
-                rpc_call_rx: rpc_call_rx.peekable(),
+                rpc_call_rx: rpc_call_rx,
 
                 // state
                 id_generator: IdGenerator::new(),
@@ -343,9 +342,8 @@ where
     }
 
     fn poll_rpc_requests(&mut self) -> Result<()> {
-        // Process new client requests if the transport is ready to send new ones, or if the client
-        // channel is shut down - then we just shut down.
-        while self.pending_payload.is_none() && !self.rpc_channel_finished()? {
+        // Process new client requests if the transport is ready to send new ones
+        while self.pending_payload.is_none() {
             // There's no pending payload, so new RPC requests can be processed.
             match self.rpc_call_rx.poll() {
                 Ok(Async::NotReady) => return Ok(()),
@@ -395,13 +393,6 @@ where
             } // TODO: add support for subscriptions
         };
         Ok(())
-    }
-
-    fn rpc_channel_finished(&mut self) -> Result<bool> {
-        match self.rpc_call_rx.peek().map_err(|_| ErrorKind::Shutdown)? {
-            Async::Ready(None) => Ok(true),
-            _ => Ok(false),
-        }
     }
 
     fn send_rpc_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
