@@ -15,33 +15,37 @@ macro_rules! jsonrpc_client {
         pub struct $struct_name:ident {$(
             $(#[$attr:meta])*
             pub fn $method:ident(&mut $selff:ident $(, $arg_name:ident: $arg_ty:ty)*)
-                -> RpcRequest<$return_ty:ty>;
+                -> Future<$return_ty:ty>;
         )*}
     ) => (
         $(#[$struct_attr])*
-        pub struct $struct_name<T: $crate::Transport> {
-            transport: T,
+        pub struct $struct_name {
+            client: $crate::ClientHandle,
         }
 
-        impl<T: $crate::Transport> $struct_name<T> {
+        impl $struct_name {
             /// Creates a new RPC client backed by the given transport implementation.
-            pub fn new(transport: T) -> Self {
-                $struct_name { transport }
+            pub fn new(client: $crate::ClientHandle) -> Self {
+                $struct_name { client }
             }
 
             $(
                 $(#[$attr])*
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
-                    -> $crate::RpcRequest<$return_ty, T::Future>
+                    -> impl $crate::Future<Item = $return_ty, Error = $crate::Error> + 'static
                 {
                     let method = String::from(stringify!($method));
-                    let params = expand_params!($($arg_name,)*);
-                    $crate::call_method(&mut $selff.transport, method, params)
+                    let raw_params = expand_params!($($arg_name,)*);
+                    let params = $crate::serialize_parameters(&raw_params);
+                    let (tx, rx) = $crate::oneshot::channel();
+                    let client_call = params.map(|p| $crate::ClientCall::RpcCall(method, p, tx));
+                    $selff.client.send_client_call(client_call, rx)
                 }
             )*
         }
     )
 }
+
 
 /// Expands a variable list of parameters into its serializable form. Is needed to make the params
 /// of a nullary method equal to `[]` instead of `()` and thus make sure it serializes to `[]`
