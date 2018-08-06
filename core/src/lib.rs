@@ -162,9 +162,7 @@ impl ClientHandle {
         future::result(client_call)
             .and_then(|call| rpc_chan.send(call).map_err(|_| ErrorKind::Shutdown.into()))
             .and_then(|_| rx.map_err(|_| ErrorKind::Shutdown).flatten())
-            .map(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
-            .flatten()
-            .from_err()
+            .and_then(|r| serde_json::from_value(r).chain_err(|| ErrorKind::DeserializeError))
     }
 
 
@@ -248,7 +246,7 @@ where
         (
             Client {
                 // request channel
-                rpc_call_rx: rpc_call_rx,
+                rpc_call_rx,
 
                 // state
                 id_generator: IdGenerator::new(),
@@ -305,7 +303,7 @@ where
                 .chain_err(|| ErrorKind::TransportError)?
             {
                 Async::Ready(Some(new_payload)) => {
-                    self.handle_transport_rx_payload(new_payload)?;
+                    self.handle_transport_rx_payload(&new_payload)?;
                     continue;
                 }
                 Async::Ready(None) => {
@@ -317,7 +315,7 @@ where
         }
     }
 
-    fn handle_transport_rx_payload(&mut self, payload: String) -> Result<()> {
+    fn handle_transport_rx_payload(&mut self, payload: &str) -> Result<()> {
         let response: Output = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
         self.handle_response(response)
@@ -379,13 +377,13 @@ where
             ClientCall::Notification(method, parameters, completion) => {
                 match serialize_notification_request(method, &parameters) {
                     Ok(payload) => {
-                        if let Err(_) = completion.send(Ok(())) {
+                        if completion.send(Ok(())).is_err() {
                             trace!("future for notification dopped already");
                         }
                         self.send_payload(payload)?;
                     }
                     Err(e) => {
-                        if let Err(_) = completion.send(Err(e)) {
+                        if completion.send(Err(e)).is_err() {
                             trace!("Future for notification already dropped");
                         }
                     }
@@ -396,7 +394,7 @@ where
     }
 
     fn send_rpc_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
-        if let Err(_) = chan.send(value) {
+        if chan.send(value).is_err() {
             trace!("Future for RPC call {:?} dropped already", id);
         }
     }
@@ -427,7 +425,7 @@ where
 
         self.fatal_error
             .take()
-            .map(|e| Err(e))
+            .map(Err)
             .unwrap_or(Ok(Async::Ready(())))
     }
 
