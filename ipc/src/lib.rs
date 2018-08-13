@@ -9,10 +9,8 @@ extern crate tokio;
 extern crate tokio_core;
 extern crate tokio_io;
 
-
-use futures::sink::Sink;
 use futures::stream::Stream;
-use jsonrpc_client_core::{Client, ClientHandle};
+use jsonrpc_client_core::Transport;
 use jsonrpc_server_utils::codecs;
 use parity_tokio_ipc::IpcConnection;
 use tokio_core::reactor::Handle;
@@ -34,32 +32,30 @@ impl IpcTransport {
             connection: IpcConnection::connect(path, handle)?,
         })
     }
+}
 
-    /// Creates a pair of a sink and a stream where the transferred item is a string representing a
-    /// single JSON object.
-    pub fn io_pair(
-        self,
-    ) -> (
-        impl Sink<SinkItem = String, SinkError = io::Error>,
-        impl Stream<Item = String, Error = io::Error>,
-    ) {
+type SinkType = futures::stream::SplitSink<
+    tokio_io::codec::Framed<
+        parity_tokio_ipc::IpcConnection,
+        jsonrpc_server_utils::codecs::StreamCodec,
+    >,
+>;
+type StreamType = futures::stream::SplitStream<
+    tokio_io::codec::Framed<
+        parity_tokio_ipc::IpcConnection,
+        jsonrpc_server_utils::codecs::StreamCodec,
+    >,
+>;
+
+
+impl Transport for IpcTransport {
+    type Error = io::Error;
+    type Sink = SinkType;
+    type Stream = StreamType;
+
+    fn io_pair(self) -> (Self::Sink, Self::Stream) {
         let codec =
             codecs::StreamCodec::new(codecs::Separator::Empty, codecs::Separator::default());
         self.connection.framed(codec).split()
-    }
-
-    /// Constructs a Client and a handle from the transport.
-    pub fn into_client(
-        self,
-    ) -> (
-        Client<
-            impl futures::Sink<SinkItem = String, SinkError = io::Error>,
-            impl futures::Stream<Item = String, Error = io::Error>,
-            io::Error,
-        >,
-        ClientHandle,
-    ) {
-        let (tx, rx) = self.io_pair();
-        Client::new(tx, rx)
     }
 }
