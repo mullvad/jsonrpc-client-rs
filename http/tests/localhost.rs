@@ -22,6 +22,7 @@ mod common;
 
 use futures::future::Either;
 use futures::Future;
+use jsonrpc_client_core::Transport;
 use jsonrpc_client_http::HttpTransport;
 use std::time::Duration;
 use tokio_core::reactor::{Core, Timeout};
