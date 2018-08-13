@@ -242,13 +242,13 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     pub fn standalone(self) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
         thread::spawn(
-            move || match create_standalone_core(self.client_creator, self.timeout) {
+            move || match create_standalone_core(&self.client_creator, self.timeout) {
                 Err(e) => {
                     tx.send(Err(e)).unwrap();
                 }
                 Ok((mut core, request_tx, future)) => {
                     tx.send(Ok(Self::build(request_tx))).unwrap();
-                    if let Err(_) = core.run(future) {
+                    if core.run(future).is_err() {
                         error!("JSON-RPC processing thread had an error");
                     }
                     debug!("Standalone HttpTransport thread exiting");
@@ -337,7 +337,7 @@ impl<F: Future<Error = Error>> Future for TimeLimited<F> {
 
 /// Creates all the components needed to run the `HttpTransport` in standalone mode.
 fn create_standalone_core<C: ClientCreator>(
-    client_creator: C,
+    client_creator: &C,
     timeout: Option<Duration>,
 ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
     let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
@@ -372,7 +372,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
             }).and_then(|response: hyper::Response| response.body().concat2().from_err())
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
-                if let Err(_) = response_tx.send(response_result) {
+                if response_tx.send(response_result).is_err() {
                     warn!("Unable to send response back to caller");
                 }
                 Ok(())
