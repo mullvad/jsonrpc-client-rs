@@ -25,6 +25,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use futures::future::{Either, Future};
+use jsonrpc_client_core::Transport;
 use jsonrpc_client_http::{ErrorKind, HttpTransport};
 use jsonrpc_http_server::hyper::server::Http;
 use tokio_core::reactor::{Core, Timeout};

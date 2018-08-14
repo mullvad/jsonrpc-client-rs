@@ -203,17 +203,33 @@ impl IdGenerator {
     }
 }
 
+/// A Transport allows one to send and receive JSON objects to a JSON-RPC server.
+pub trait Transport: Sized {
+    /// A transport specific error
+    type Error: ::std::error::Error + Send + 'static;
+    /// A stream of strings, each of which represent a single JSON value that is either an array or
+    /// an object used to receive messages from a JSON-RPC server.
+    type Stream: Stream<Item = String, Error = Self::Error>;
+    /// A sink of strings, each of which represent a single JSON value that is either an array or an
+    /// object used to send messages to a JSON-RPC server.
+    type Sink: Sink<SinkItem = String, SinkError = Self::Error>;
+
+    /// Transforms the transport implementation into a sink and a stream.
+    fn io_pair(self) -> (Self::Sink, Self::Stream);
+
+    /// Creates a Client and a ClientHandle from a transport implementation.
+    fn into_client(self) -> (Client<Self>, ClientHandle) {
+        let (tx, rx) = self.io_pair();
+        Client::new(tx, rx)
+    }
+}
+
 
 /// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
 /// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
 /// To send and receive messages, one should use the ClientHandle.
 #[derive(Debug)]
-pub struct Client<W, R, E>
-where
-    W: Sink<SinkItem = String, SinkError = E>,
-    R: Stream<Item = String, Error = E>,
-    E: std::error::Error + Send + 'static,
-{
+pub struct Client<T: Transport> {
     // request channel
     rpc_call_rx: mpsc::Receiver<ClientCall>,
 
@@ -225,23 +241,18 @@ where
     fatal_error: Option<Error>,
 
     // transport
-    transport_tx: W,
-    transport_rx: R,
+    transport_tx: T::Sink,
+    transport_rx: T::Stream,
 }
 
-impl<W, R, E> Client<W, R, E>
-where
-    W: Sink<SinkItem = String, SinkError = E>,
-    R: Stream<Item = String, Error = E>,
-    E: std::error::Error + Send + 'static,
-{
+impl<T: Transport> Client<T> {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
-    pub fn new(transport_tx: W, transport_rx: R) -> (Self, ClientHandle) {
+    pub fn new(transport_tx: T::Sink, transport_rx: T::Stream) -> (Self, ClientHandle) {
         let (rpc_call_chan, rpc_call_rx) = mpsc::channel(0);
         (
             Client {
@@ -393,7 +404,7 @@ where
         Ok(())
     }
 
-    fn send_rpc_response<T>(id: &Id, chan: oneshot::Sender<Result<T>>, value: Result<T>) {
+    fn send_rpc_response<V>(id: &Id, chan: oneshot::Sender<Result<V>>, value: Result<V>) {
         if chan.send(value).is_err() {
             trace!("Future for RPC call {:?} dropped already", id);
         }
@@ -443,12 +454,7 @@ where
     }
 }
 
-impl<W, R, E> Future for Client<W, R, E>
-where
-    W: Sink<SinkItem = String, SinkError = E>,
-    R: Stream<Item = String, Error = E>,
-    E: std::error::Error + Send + 'static,
-{
+impl<T: Transport> Future for Client<T> {
     type Item = ();
     type Error = Error;
 

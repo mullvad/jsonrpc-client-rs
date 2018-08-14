@@ -45,7 +45,7 @@
 //! extern crate jsonrpc_client_http;
 //!
 //! use jsonrpc_client_http::HttpTransport;
-//! use jsonrpc_client_core::Future;
+//! use jsonrpc_client_core::{Future, Transport};
 //!
 //! jsonrpc_client!(pub struct FizzBuzzClient {
 //!     /// Returns the fizz-buzz string for the given number, as a future.
@@ -89,7 +89,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future, Poll, Sink, Stream};
 pub use hyper::header;
 use hyper::{Client, Request, StatusCode, Uri};
-use jsonrpc_client_core::{Client as RpcClient, ClientHandle as RpcClientHandle};
+use jsonrpc_client_core::Transport;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
@@ -242,13 +242,13 @@ impl<C: ClientCreator> HttpTransportBuilder<C> {
     pub fn standalone(self) -> Result<HttpTransport> {
         let (tx, rx) = ::std::sync::mpsc::channel();
         thread::spawn(
-            move || match create_standalone_core(self.client_creator, self.timeout) {
+            move || match create_standalone_core(&self.client_creator, self.timeout) {
                 Err(e) => {
                     tx.send(Err(e)).unwrap();
                 }
                 Ok((mut core, request_tx, future)) => {
                     tx.send(Ok(Self::build(request_tx))).unwrap();
-                    if let Err(_) = core.run(future) {
+                    if core.run(future).is_err() {
                         error!("JSON-RPC processing thread had an error");
                     }
                     debug!("Standalone HttpTransport thread exiting");
@@ -337,7 +337,7 @@ impl<F: Future<Error = Error>> Future for TimeLimited<F> {
 
 /// Creates all the components needed to run the `HttpTransport` in standalone mode.
 fn create_standalone_core<C: ClientCreator>(
-    client_creator: C,
+    client_creator: &C,
     timeout: Option<Duration>,
 ) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
     let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
@@ -372,7 +372,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
             }).and_then(|response: hyper::Response| response.body().concat2().from_err())
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
-                if let Err(_) = response_tx.send(response_result) {
+                if response_tx.send(response_result).is_err() {
                     warn!("Unable to send response back to caller");
                 }
                 Ok(())
@@ -415,41 +415,6 @@ impl HttpHandle {
         request
     }
 
-    /// Creates a sink and a stream that can indefinitely transfer RPC messages. Sink will accept
-    /// strings intended to be valid JSON and the stream will return strings which are the body of
-    /// the responses from the JSONRPC server. The resulting stream and sink pair is intended to be
-    /// used to construct jsonrpc_client_core::Client.
-    pub fn io_pair(
-        self,
-    ) -> (
-        impl Sink<SinkItem = String, SinkError = Error>,
-        impl Stream<Item = String, Error = Error>,
-    ) {
-        let (tx, rx) = mpsc::channel(0);
-        let sink = tx
-            .sink_map_err(|_| Error::from(ErrorKind::TokioCoreError("Not listening for requests")))
-            .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
-        let stream = rx
-            .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
-            .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::ParseBodyError));
-        (sink, stream)
-    }
-
-    /// Constructs a jsonrpc_client_core::Client from the HTTP transport
-    pub fn into_client(
-        self,
-    ) -> (
-        RpcClient<
-            impl futures::Sink<SinkItem = String, SinkError = Error>,
-            impl futures::Stream<Item = String, Error = Error>,
-            Error,
-        >,
-        RpcClientHandle,
-    ) {
-        let (tx, rx) = self.io_pair();
-        RpcClient::new(tx, rx)
-    }
-
     fn send_fut(&self, json_data: Vec<u8>) -> impl Future<Item = Vec<u8>, Error = Error> + Send {
         let request = self.create_request(json_data);
         let (response_tx, response_rx) = oneshot::channel();
@@ -473,6 +438,23 @@ impl HttpHandle {
     /// corresponding response.
     pub fn send(&self, json_data: Vec<u8>) -> Box<Future<Item = Vec<u8>, Error = Error> + Send> {
         Box::new(self.send_fut(json_data))
+    }
+}
+
+impl Transport for HttpHandle {
+    type Error = Error;
+    type Sink = Box<Sink<SinkItem = String, SinkError = Self::Error>>;
+    type Stream = Box<Stream<Item = String, Error = Self::Error>>;
+
+    fn io_pair(self) -> (Self::Sink, Self::Stream) {
+        let (tx, rx) = mpsc::channel(0);
+        let sink = tx
+            .sink_map_err(|_| Error::from(ErrorKind::TokioCoreError("Not listening for requests")))
+            .with(move |json_string: String| self.send_fut(json_string.into_bytes()));
+        let stream = rx
+            .map_err(|_| Error::from(ErrorKind::TokioCoreError("Sender closed")))
+            .and_then(|bytes| String::from_utf8(bytes).chain_err(|| ErrorKind::ParseBodyError));
+        (Box::new(sink), Box::new(stream))
     }
 }
 
