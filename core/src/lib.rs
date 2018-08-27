@@ -167,7 +167,7 @@ impl ClientHandle {
 
 
     /// Sends a notificaiton to the Server.
-    pub fn send_notification<P, T>(
+    pub fn send_notification(
         &self,
         method: String,
         parameters: &impl serde::Serialize,
@@ -176,12 +176,12 @@ impl ClientHandle {
 
         let rpc_chan = self.rpc_call_chan.clone();
 
-        future::result(serialize_parameters(&parameters))
+        future::result(serialize_parameters(parameters))
             .and_then(|params| {
                 rpc_chan
                     .send(ClientCall::Notification(method, params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            }).then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
+            }).and_then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
             .flatten()
     }
 }
