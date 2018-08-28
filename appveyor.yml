@@ -11,7 +11,6 @@ environment:
   # don't need
   matrix:
     # MinGW
-    - TARGET: i686-pc-windows-gnu
     - TARGET: x86_64-pc-windows-gnu
 
     # MSVC
@@ -19,12 +18,8 @@ environment:
     - TARGET: x86_64-pc-windows-msvc
 
     # Testing other channels
-    - TARGET: x86_64-pc-windows-gnu
-      RUST_VERSION: beta
     - TARGET: x86_64-pc-windows-msvc
       RUST_VERSION: beta
-    - TARGET: x86_64-pc-windows-gnu
-      RUST_VERSION: nightly
     - TARGET: x86_64-pc-windows-msvc
       RUST_VERSION: nightly
 
