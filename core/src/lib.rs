@@ -53,7 +53,8 @@
 //! ```
 //!
 
-#![deny(missing_docs)]
+// TODO: deny missing docs
+// #![deny(missing_docs)]
 
 #[macro_use]
 pub extern crate error_chain;
@@ -65,19 +66,20 @@ extern crate serde;
 extern crate serde_json;
 
 use futures::future;
+use futures::stream;
 use futures::sync::mpsc;
 pub use futures::sync::oneshot;
 pub use futures::Future;
 use futures::{Async, AsyncSink};
 use futures::{Sink, Stream};
 use jsonrpc_core::types::{
-    Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Success as RpcSuccess,
-    Version,
+    Call, Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Request, Response,
+    Success as RpcSuccess, Version,
 };
 use serde_json::Value as JsonValue;
 
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -85,6 +87,8 @@ mod macros;
 
 mod id_generator;
 use id_generator::IdGenerator;
+
+mod server;
 
 /// Module containing an example client. To show in the docs what a generated struct look like.
 pub mod example;
@@ -211,11 +215,19 @@ pub trait Transport: Sized {
     }
 }
 
+type MethodHandler = Box<FnMut(MethodCall) -> Future<Item = RpcSuccess, Error = Error>>;
+type NotificationHandler = Box<FnMut(Notification) -> Future<Item = (), Error = Error>>;
+
+pub enum Handler {
+    MethodHandler(MethodHandler),
+    NotificationHandler(NotificationHandler),
+}
 
 /// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
 /// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
 /// To send and receive messages, one should use the ClientHandle.
 #[derive(Debug)]
+#[must_use]
 pub struct Client<T: Transport> {
     // request channel
     rpc_call_rx: mpsc::Receiver<ClientCall>,
@@ -226,6 +238,7 @@ pub struct Client<T: Transport> {
     pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
     pending_payload: Option<String>,
     fatal_error: Option<Error>,
+    server_handler: Option<()>,
 
     // transport
     transport_tx: T::Sink,
@@ -252,6 +265,7 @@ impl<T: Transport> Client<T> {
                 shutting_down: false,
                 fatal_error: None,
                 pending_requests: HashMap::new(),
+                server_handler: None,
 
                 // transport
                 transport_tx,
@@ -386,7 +400,12 @@ impl<T: Transport> Client<T> {
                         }
                     }
                 }
-            } // TODO: add support for subscriptions
+            }
+            ClientCall::Response(response) => {
+                self.send_payload(
+                    serde_json::to_string(&response).chain_err(|| ErrorKind::SerializeError)?,
+                )?;
+            }
         };
         Ok(())
     }
@@ -467,8 +486,9 @@ pub enum ClientCall {
     RpcCall(String, Option<Params>, oneshot::Sender<Result<JsonValue>>),
     /// Send a notification
     Notification(String, Option<Params>, oneshot::Sender<Result<()>>),
+    /// Send a response response
+    Response(Response),
 }
-
 
 /// Creates a JSON-RPC 2.0 request to the given method with the given parameters.
 fn serialize_method_request(
