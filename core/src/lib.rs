@@ -83,6 +83,9 @@ use std::collections::HashMap;
 #[macro_use]
 mod macros;
 
+mod id_generator;
+use id_generator::IdGenerator;
+
 /// Module containing an example client. To show in the docs what a generated struct look like.
 pub mod example;
 
@@ -186,22 +189,6 @@ impl ClientHandle {
     }
 }
 
-#[derive(Debug)]
-struct IdGenerator {
-    next_id: u64,
-}
-
-impl IdGenerator {
-    fn new() -> IdGenerator {
-        IdGenerator { next_id: 1 }
-    }
-
-    fn next(&mut self) -> Id {
-        let id = Id::Num(self.next_id);
-        self.next_id += 1;
-        id
-    }
-}
 
 /// A Transport allows one to send and receive JSON objects to a JSON-RPC server.
 pub trait Transport: Sized {
