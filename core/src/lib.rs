@@ -88,6 +88,7 @@ mod macros;
 mod id_generator;
 use id_generator::IdGenerator;
 
+mod select_weak;
 mod server;
 
 /// Module containing an example client. To show in the docs what a generated struct look like.
