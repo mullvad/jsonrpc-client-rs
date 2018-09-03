@@ -62,24 +62,25 @@ extern crate futures;
 extern crate jsonrpc_core;
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 
 use futures::future;
-use futures::stream;
 use futures::sync::mpsc;
 pub use futures::sync::oneshot;
 pub use futures::Future;
 use futures::{Async, AsyncSink};
 use futures::{Sink, Stream};
 use jsonrpc_core::types::{
-    Call, Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Request, Response,
+    Failure as RpcFailure, Id, MethodCall, Notification, Output, Params, Request, Response,
     Success as RpcSuccess, Version,
 };
 use serde_json::Value as JsonValue;
 
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap};
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -89,7 +90,9 @@ mod id_generator;
 use id_generator::IdGenerator;
 
 mod select_weak;
-mod server;
+use select_weak::SelectWithWeakExt;
+
+pub mod server;
 
 /// Module containing an example client. To show in the docs what a generated struct look like.
 pub mod example;
@@ -210,28 +213,31 @@ pub trait Transport: Sized {
     fn io_pair(self) -> (Self::Sink, Self::Stream);
 
     /// Creates a Client and a ClientHandle from a transport implementation.
-    fn into_client(self) -> (Client<Self>, ClientHandle) {
-        let (tx, rx) = self.io_pair();
-        Client::new(tx, rx)
+    fn into_client(self) -> (Client<Self, server::Server>, ClientHandle) {
+        self.with_server(server::Server::new())
     }
-}
 
-type MethodHandler = Box<FnMut(MethodCall) -> Future<Item = RpcSuccess, Error = Error>>;
-type NotificationHandler = Box<FnMut(Notification) -> Future<Item = (), Error = Error>>;
-
-pub enum Handler {
-    MethodHandler(MethodHandler),
-    NotificationHandler(NotificationHandler),
+    /// Creates a Client and a ClientHandle from a transport implementation and provides a custom
+    /// server implementation.
+    fn with_server<S: server::ServerHandler>(self, s: S) -> (Client<Self, S>, ClientHandle) {
+        let (tx, rx) = self.io_pair();
+        Client::new(tx, rx, s)
+    }
 }
 
 /// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
 /// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
 /// To send and receive messages, one should use the ClientHandle.
-#[derive(Debug)]
+// TODO: fix Debug
+// #[derive(Debug)]
 #[must_use]
-pub struct Client<T: Transport> {
+pub struct Client<T: Transport, S: server::ServerHandler> {
     // request channel
-    rpc_call_rx: mpsc::Receiver<ClientCall>,
+    // rpc_call_rx: mpsc::Receiver<ClientCall>,
+    rpc_call_rx: select_weak::SelectWithWeak<
+        futures::sync::mpsc::Receiver<ClientCall>,
+        futures::sync::mpsc::Receiver<ClientCall>,
+    >,
 
     // state
     id_generator: IdGenerator,
@@ -239,22 +245,41 @@ pub struct Client<T: Transport> {
     pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
     pending_payload: Option<String>,
     fatal_error: Option<Error>,
-    server_handler: Option<()>,
+
+    // server handler
+    server_handler: S,
+    response_chan: mpsc::Sender<ClientCall>,
 
     // transport
     transport_tx: T::Sink,
     transport_rx: T::Stream,
 }
 
-impl<T: Transport> Client<T> {
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Message {
+    Request(Request),
+    Response(Output),
+}
+
+impl<T: Transport, S: server::ServerHandler> Client<T, S> {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
-    pub fn new(transport_tx: T::Sink, transport_rx: T::Stream) -> (Self, ClientHandle) {
-        let (rpc_call_chan, rpc_call_rx) = mpsc::channel(0);
+    pub fn new(
+        transport_tx: T::Sink,
+        transport_rx: T::Stream,
+        server_handler: S,
+    ) -> (Self, ClientHandle) {
+        let (rpc_call_chan, rpc_client_rx) = mpsc::channel(0);
+        let (response_chan, response_rx) = mpsc::channel(0);
+
+        let rpc_call_rx = rpc_client_rx.select_with_weak(response_rx);
+
+
         (
             Client {
                 // request channel
@@ -266,7 +291,10 @@ impl<T: Transport> Client<T> {
                 shutting_down: false,
                 fatal_error: None,
                 pending_requests: HashMap::new(),
-                server_handler: None,
+
+                // server handlers
+                server_handler,
+                response_chan,
 
                 // transport
                 transport_tx,
@@ -287,6 +315,8 @@ impl<T: Transport> Client<T> {
         if let Some(payload) = self.pending_payload.take() {
             self.send_payload(payload)?;
         }
+        // drive server futures
+        self.poll_server()?;
         // drain incoming payload
         self.poll_transport_rx()?;
         // drain incoming rpc requests, only if the writing pipe is ready
@@ -329,9 +359,14 @@ impl<T: Transport> Client<T> {
     }
 
     fn handle_transport_rx_payload(&mut self, payload: &str) -> Result<()> {
-        let response: Output = serde_json::from_str(&payload)
+        let msg: Message = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::ResponseError("Failed to deserialize response"))?;
-        self.handle_response(response)
+        match msg {
+            Message::Request(req) => Ok(self
+                .server_handler
+                .process_request(req, self.response_chan.clone())),
+            Message::Response(response) => self.handle_response(response),
+        }
     }
 
     fn handle_response(&mut self, output: Output) -> Result<()> {
@@ -411,6 +446,16 @@ impl<T: Transport> Client<T> {
         Ok(())
     }
 
+    fn poll_server(&mut self) -> Result<()> {
+        if !self.shutting_down {
+            self.shutting_down = match self.server_handler.poll()? {
+                Async::NotReady => false,
+                _ => true,
+            };
+        };
+        Ok(())
+    }
+
     fn send_rpc_response<V>(id: &Id, chan: oneshot::Sender<Result<V>>, value: Result<V>) {
         if chan.send(value).is_err() {
             trace!("Future for RPC call {:?} dropped already", id);
@@ -461,7 +506,7 @@ impl<T: Transport> Client<T> {
     }
 }
 
-impl<T: Transport> Future for Client<T> {
+impl<T: Transport, S: server::ServerHandler> Future for Client<T, S> {
     type Item = ();
     type Error = Error;
 
