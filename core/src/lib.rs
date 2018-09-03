@@ -53,8 +53,7 @@
 //! ```
 //!
 
-// TODO: deny missing docs
-// #![deny(missing_docs)]
+#![deny(missing_docs)]
 
 #[macro_use]
 pub extern crate error_chain;
@@ -80,7 +79,7 @@ use jsonrpc_core::types::{
 use serde_json::Value as JsonValue;
 
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 /// Contains the main macro of this crate, `jsonrpc_client`.
 #[macro_use]
@@ -92,6 +91,8 @@ use id_generator::IdGenerator;
 mod select_weak;
 use select_weak::SelectWithWeakExt;
 
+/// Module containing the _server_ part of the client, allowing the user to set callbacks for
+/// various method and notification requests coming in from the server. Does not work with HTTP.
 pub mod server;
 
 /// Module containing an example client. To show in the docs what a generated struct look like.
@@ -228,12 +229,11 @@ pub trait Transport: Sized {
 /// Client is a future that takes an arbitrary transport sink and stream pair and handles JSON-RPC
 /// 2.0 messages with a server. This future has to be driven for the messages to be passed around.
 /// To send and receive messages, one should use the ClientHandle.
-// TODO: fix Debug
-// #[derive(Debug)]
+#[derive(Debug)]
 #[must_use]
 pub struct Client<T: Transport, S: server::ServerHandler> {
-    // request channel
-    // rpc_call_rx: mpsc::Receiver<ClientCall>,
+    // request channel, selecting between client calls from the client handle
+    // and the server, when no more client handles exist, the stream will close down.
     rpc_call_rx: select_weak::SelectWithWeak<
         futures::sync::mpsc::Receiver<ClientCall>,
         futures::sync::mpsc::Receiver<ClientCall>,
