@@ -1,2 +1,2 @@
 [workspace]
-members = ["core", "http", "ipc", "utils"]
+members = ["core", "http", "ipc", "pubsub", "utils"]
