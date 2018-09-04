@@ -258,8 +258,10 @@ pub struct Client<T: Transport, S: server::ServerHandler> {
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum Message {
-    Request(Request),
+    // take care, ordering here is important. Serde won't match a response struct if the request
+    // comes first.
     Response(Output),
+    Request(Request),
 }
 
 impl<T: Transport, S: server::ServerHandler> Client<T, S> {
