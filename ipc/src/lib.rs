@@ -6,14 +6,13 @@ extern crate jsonrpc_client_core;
 extern crate jsonrpc_server_utils;
 extern crate parity_tokio_ipc;
 extern crate tokio;
-extern crate tokio_core;
 extern crate tokio_io;
 
 use futures::stream::Stream;
 use jsonrpc_client_core::Transport;
 use jsonrpc_server_utils::codecs;
 use parity_tokio_ipc::IpcConnection;
-use tokio_core::reactor::Handle;
+use tokio::reactor::Handle;
 use tokio_io::AsyncRead;
 
 use std::io;
