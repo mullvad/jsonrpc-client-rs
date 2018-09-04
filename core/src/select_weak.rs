@@ -35,6 +35,7 @@ pub struct SelectWithWeak<S1, S2> {
     strong: Fuse<S1>,
     weak: Fuse<S2>,
     use_strong: bool,
+    weak_done: bool,
 }
 
 fn new<S1, S2>(stream1: S1, stream2: S2) -> SelectWithWeak<S1, S2>
@@ -46,7 +47,31 @@ where
         strong: stream1.fuse(),
         weak: stream2.fuse(),
         use_strong: false,
+        weak_done: false,
     }
+}
+
+impl<S1,S2> SelectWithWeak<S1, S2> 
+where
+    S1: Stream,
+    S2: Stream<Item = S1::Item, Error = S1::Error>,
+{
+    fn check_weak(&mut self) -> Poll<Option<S1::Item>, S1::Error> {
+        if !self.weak_done {
+            let result = match self.weak.poll()? {
+                Async::Ready(None) => {
+                    self.weak_done = true;
+                    Async::NotReady
+                }
+                Async::NotReady => Async::NotReady,
+                a => a,
+            };
+            return Ok(result);
+        }
+        Ok(Async::NotReady)
+
+    }
+
 }
 
 impl<S1, S2> Stream for SelectWithWeak<S1, S2>
@@ -58,31 +83,19 @@ where
     type Error = S1::Error;
 
     fn poll(&mut self) -> Poll<Option<S1::Item>, S1::Error> {
-        let mut checked_strong = false;
-        loop {
-            if self.use_strong {
-                match self.strong.poll()? {
-                    Async::Ready(Some(item)) => {
-                        self.use_strong = false;
-                        return Ok(Some(item).into());
-                    }
-                    Async::Ready(None) => return Ok(None.into()),
-                    Async::NotReady => {
-                        if !checked_strong {
-                            self.use_strong = false;
-                        } else {
-                            return Ok(Async::NotReady);
-                        }
-                    }
-                }
-                checked_strong = true;
-            } else {
-                self.use_strong = true;
-                match self.weak.poll()? {
-                    Async::Ready(Some(item)) => return Ok(Some(item).into()),
-                    Async::Ready(None) | Async::NotReady => (),
-                }
+        if !self.use_strong {
+            self.use_strong = true;
+            match self.check_weak() {
+                Ok(Async::NotReady) => self.strong.poll(),
+                others => others,
+            }
+        } else {
+            self.use_strong = false;
+            match self.strong.poll() {
+                Ok(Async::NotReady) => self.check_weak(),
+                others => others,
             }
         }
     }
+
 }
