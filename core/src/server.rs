@@ -1,4 +1,4 @@
-use super::{ClientCall, Error, ErrorKind, Result};
+use super::{OutgoingMessaage, Error, ErrorKind, Result};
 use id_generator::IdGenerator;
 
 use futures::future::Either;
@@ -171,7 +171,7 @@ impl Future for Server {
 
 
 impl ServerHandler for Server {
-    fn process_request(&mut self, request: Request, sink: mpsc::Sender<ClientCall>) {
+    fn process_request(&mut self, request: Request, sink: mpsc::Sender<OutgoingMessaage>) {
         let driveable_future = match request {
             Request::Single(req) => {
                 let driveable_future =
@@ -179,7 +179,7 @@ impl ServerHandler for Server {
                         .handle_single_call(req)
                         .and_then(move |output| match output {
                             Some(response) => Either::A(
-                                sink.send(ClientCall::Response(Response::Single(response)))
+                                sink.send(OutgoingMessaage::Response(Response::Single(response)))
                                     .map_err(|_| ErrorKind::Shutdown.into())
                                     .map(|_| ()),
                             ),
@@ -198,7 +198,7 @@ impl ServerHandler for Server {
                 .and_then(|results| {
                     if results.len() > 0 {
                         Either::A(
-                            sink.send(ClientCall::Response(Response::Batch(results)))
+                            sink.send(OutgoingMessaage::Response(Response::Batch(results)))
                                 .map_err(|_| ErrorKind::Shutdown.into())
                                 .map(|_| ()),
                         )
@@ -218,5 +218,5 @@ impl ServerHandler for Server {
 pub trait ServerHandler: Future<Item = (), Error = Error> {
     /// Handles a request coming in from the server, optionally sending a result back to the
     /// server.
-    fn process_request(&mut self, Request, sender: mpsc::Sender<ClientCall>);
+    fn process_request(&mut self, Request, sender: mpsc::Sender<OutgoingMessaage>);
 }
