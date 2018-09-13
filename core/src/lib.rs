@@ -140,7 +140,7 @@ error_chain! {
 #[must_use]
 #[derive(Debug, Clone)]
 pub struct ClientHandle {
-    client_handle_tx: mpsc::Sender<ClientCall>,
+    client_handle_tx: mpsc::Sender<OutgoingMessage>,
 }
 
 impl ClientHandle {
@@ -157,7 +157,7 @@ impl ClientHandle {
         let client = self.clone();
 
         future::result(serialize_parameters(parameters)).and_then(move |params| {
-            client.send_client_call(Ok(ClientCall::RpcCall(method.into(), params, tx)), rx)
+            client.send_client_call(Ok(OutgoingMessage::RpcCall(method.into(), params, tx)), rx)
         })
     }
 
@@ -166,7 +166,7 @@ impl ClientHandle {
     #[doc(hidden)]
     pub fn send_client_call<T: serde::de::DeserializeOwned + Send + Sized>(
         &self,
-        client_call: Result<ClientCall>,
+        client_call: Result<OutgoingMessage>,
         rx: oneshot::Receiver<Result<JsonValue>>,
     ) -> impl Future<Item = T, Error = Error> {
         let rpc_chan = self.client_handle_tx.clone();
@@ -191,7 +191,7 @@ impl ClientHandle {
         future::result(serialize_parameters(parameters))
             .and_then(|params| {
                 rpc_chan
-                    .send(ClientCall::Notification(method, params, tx))
+                    .send(OutgoingMessage::Notification(method, params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
             }).and_then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
             .flatten()
@@ -235,19 +235,19 @@ pub struct Client<T: Transport, S: server::ServerHandler> {
     // request channel, selecting between client calls from the client handle
     // and the server, when no more client handles exist, the stream will close down.
     outgoing_payload_rx: select_weak::SelectWithWeak<
-        futures::sync::mpsc::Receiver<ClientCall>,
-        futures::sync::mpsc::Receiver<ClientCall>,
+        futures::sync::mpsc::Receiver<OutgoingMessage>,
+        futures::sync::mpsc::Receiver<OutgoingMessage>,
     >,
 
     // state
     id_generator: IdGenerator,
     shutting_down: bool,
-    pending_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
+    pending_client_requests: HashMap<Id, oneshot::Sender<Result<JsonValue>>>,
     pending_payload: Option<String>,
     fatal_error: Option<Error>,
 
     server_handler: S,
-    server_response_tx: mpsc::Sender<ClientCall>,
+    server_response_tx: mpsc::Sender<OutgoingMessage>,
 
     // transport
     transport_tx: T::Sink,
@@ -256,7 +256,7 @@ pub struct Client<T: Transport, S: server::ServerHandler> {
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum Message {
+enum IncomingMessage {
     // take care, ordering here is important. Serde won't match a response struct if the request
     // comes first.
     Response(Output),
@@ -291,7 +291,7 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
                 pending_payload: None,
                 shutting_down: false,
                 fatal_error: None,
-                pending_requests: HashMap::new(),
+                pending_client_requests: HashMap::new(),
 
                 // server handlers
                 server_handler,
@@ -321,7 +321,7 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
         // drain incoming payload
         self.poll_transport_rx()?;
         // drain incoming rpc requests, only if the writing pipe is ready
-        self.poll_rpc_requests()?;
+        self.poll_outgoing_messages()?;
         // poll transport tx to drive sending
         self.poll_transport_tx()?;
         Ok(())
@@ -360,13 +360,13 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
     }
 
     fn handle_transport_rx_payload(&mut self, payload: &str) -> Result<()> {
-        let msg: Message = serde_json::from_str(&payload)
+        let msg: IncomingMessage = serde_json::from_str(&payload)
             .chain_err(|| ErrorKind::DeserializeError)?;
         match msg {
-            Message::Request(req) => Ok(self
+            IncomingMessage::Request(req) => Ok(self
                 .server_handler
                 .process_request(req, self.server_response_tx.clone())),
-            Message::Response(response) => self.handle_response(response),
+            IncomingMessage::Response(response) => self.handle_response(response),
         }
     }
 
@@ -381,21 +381,21 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
             }
         };
 
-        match self.pending_requests.remove(&id) {
+        match self.pending_client_requests.remove(&id) {
             Some(completion_chan) => Self::send_rpc_response(&id, completion_chan, result),
             None => trace!("Received response with an invalid id {:?}", id),
         };
         Ok(())
     }
 
-    fn poll_rpc_requests(&mut self) -> Result<()> {
-        // Process new client requests if the transport is ready to send new ones
+    fn poll_outgoing_messages(&mut self) -> Result<()> {
+        // Process new client payloads if the transport is ready to send new ones
         while self.pending_payload.is_none() {
             // There's no pending payload, so new RPC requests can be processed.
             match self.outgoing_payload_rx.poll() {
                 Ok(Async::NotReady) => return Ok(()),
                 Ok(Async::Ready(Some(call))) => {
-                    self.handle_rpc_request(call)?;
+                    self.handle_client_payload(call)?;
                 }
                 Ok(Async::Ready(None)) => {
                     trace!("All client handles and futures dropped, shutting down");
@@ -409,9 +409,9 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
         Ok(())
     }
 
-    fn handle_rpc_request(&mut self, call: ClientCall) -> Result<()> {
-        match call {
-            ClientCall::RpcCall(method, parameters, completion) => {
+    fn handle_client_payload(&mut self, message: OutgoingMessage) -> Result<()> {
+        match message {
+            OutgoingMessage::RpcCall(method, parameters, completion) => {
                 let new_id = self.id_generator.next();
                 match serialize_method_request(new_id.clone(), method, &parameters) {
                     Ok(payload) => {
@@ -423,7 +423,7 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
                     }
                 };
             }
-            ClientCall::Notification(method, parameters, completion) => {
+            OutgoingMessage::Notification(method, parameters, completion) => {
                 match serialize_notification_request(method, &parameters) {
                     Ok(payload) => {
                         if completion.send(Ok(())).is_err() {
@@ -438,7 +438,7 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
                     }
                 }
             }
-            ClientCall::Response(response) => {
+            OutgoingMessage::Response(response) => {
                 self.send_payload(
                     serde_json::to_string(&response).chain_err(|| ErrorKind::SerializeError)?,
                 )?;
@@ -494,7 +494,7 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
     }
 
     fn add_new_call(&mut self, id: Id, completion: oneshot::Sender<Result<JsonValue>>) {
-        self.pending_requests.insert(id, completion);
+        self.pending_client_requests.insert(id, completion);
     }
 
     fn poll_transport_tx(&mut self) -> Result<()> {
@@ -525,10 +525,10 @@ impl<T: Transport, S: server::ServerHandler> Future for Client<T, S> {
 }
 
 
-/// A client call is an operation that the Client can execute with a JSON-RPC 2.0 server.
-/// Any client handle can execute these against the corresponding RPC server.
+/// Outgoing message contains data to construct a complete object will be sent to the JSON-RPC 2.0
+/// server. This can be a request, a notification or a response to a previously received request.
 #[derive(Debug)]
-pub enum ClientCall {
+pub enum OutgoingMessage {
     /// Invoke an RPC
     RpcCall(String, Option<Params>, oneshot::Sender<Result<JsonValue>>),
     /// Send a notification
