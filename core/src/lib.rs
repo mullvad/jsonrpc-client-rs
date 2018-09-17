@@ -51,7 +51,6 @@
 //!     println!("{} {} {}", result1, result2, result3);
 //! }
 //! ```
-//!
 
 #![deny(missing_docs)]
 
@@ -205,10 +204,10 @@ pub trait Transport: Sized {
     type Error: ::std::error::Error + Send + 'static;
     /// A stream of strings, each of which represent a single JSON value that is either an array or
     /// an object used to receive messages from a JSON-RPC server.
-    type Stream: Stream<Item = String, Error = Self::Error>;
+    type Stream: Stream<Item = String, Error = Self::Error> + Send;
     /// A sink of strings, each of which represent a single JSON value that is either an array or an
     /// object used to send messages to a JSON-RPC server.
-    type Sink: Sink<SinkItem = String, SinkError = Self::Error>;
+    type Sink: Sink<SinkItem = String, SinkError = Self::Error> + Send;
 
     /// Transforms the transport implementation into a sink and a stream.
     fn io_pair(self) -> (Self::Sink, Self::Stream);
@@ -360,8 +359,8 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
     }
 
     fn handle_transport_rx_payload(&mut self, payload: &str) -> Result<()> {
-        let msg: IncomingMessage = serde_json::from_str(&payload)
-            .chain_err(|| ErrorKind::DeserializeError)?;
+        let msg: IncomingMessage =
+            serde_json::from_str(&payload).chain_err(|| ErrorKind::DeserializeError)?;
         match msg {
             IncomingMessage::Request(req) => Ok(self
                 .server_handler

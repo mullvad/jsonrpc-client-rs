@@ -1,4 +1,4 @@
-use super::{OutgoingMessage, Error, ErrorKind, Result};
+use super::{Error, ErrorKind, OutgoingMessage, Result};
 use id_generator::IdGenerator;
 
 use futures::future::Either;
@@ -14,8 +14,10 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 
-type MethodHandler = Box<Fn(MethodCall) -> Box<Future<Item = Output, Error = Error>>>;
-type NotificationHandler = Box<Fn(Notification) -> Box<Future<Item = (), Error = Error>>>;
+type MethodHandler =
+    Box<dyn Fn(MethodCall) -> Box<Future<Item = Output, Error = Error> + Send> + Send + Sync>;
+type NotificationHandler =
+    Box<dyn Fn(Notification) -> Box<Future<Item = (), Error = Error> + Send> + Send + Sync>;
 
 
 /// A callback to be called in response to either a notification or a method call coming in from
@@ -92,6 +94,7 @@ impl Handlers {
     }
 }
 
+
 impl fmt::Debug for Handlers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Handlers{{\n")?;
@@ -124,8 +127,8 @@ pub struct Server {
     id_generator: IdGenerator,
 }
 
-type PendingCall = Box<Future<Item = Option<Output>, Error = Error>>;
-type DrivableCall = Box<Future<Item = (), Error = Error>>;
+type PendingCall = Box<Future<Item = Option<Output>, Error = Error> + Send>;
+type DrivableCall = Box<Future<Item = (), Error = Error> + Send>;
 
 impl Server {
     /// Constructs a new server.
