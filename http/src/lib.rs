@@ -443,8 +443,8 @@ impl HttpHandle {
 
 impl Transport for HttpHandle {
     type Error = Error;
-    type Sink = Box<Sink<SinkItem = String, SinkError = Self::Error>>;
-    type Stream = Box<Stream<Item = String, Error = Self::Error>>;
+    type Sink = Box<Sink<SinkItem = String, SinkError = Self::Error> + Send>;
+    type Stream = Box<Stream<Item = String, Error = Self::Error> + Send>;
 
     fn io_pair(self) -> (Self::Sink, Self::Stream) {
         let (tx, rx) = mpsc::channel(0);
