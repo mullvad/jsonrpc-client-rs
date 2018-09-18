@@ -192,7 +192,7 @@ impl Drop for Server {
 
 impl ServerHandler for Server {
     fn process_request(&mut self, request: Request, sink: mpsc::Sender<OutgoingMessage>) {
-        let driveable_future = match request {
+        let mut driveable_future = match request {
             Request::Single(req) => {
                 let driveable_future =
                     self.handlers
@@ -229,7 +229,13 @@ impl ServerHandler for Server {
                 Either::B(fut)
             }
         };
-        self.push_future(Box::new(driveable_future));
+        // eagerly drive the new future to register it with the current future execution context.
+        // otherwise, once it's ready, the currently executing future won't be notified.
+        match driveable_future.poll() {
+            Ok(Async::NotReady) => self.push_future(Box::new(driveable_future)),
+            Err(e) => self.push_future(Box::new(future::err(e))),
+            _ => (),
+        };
     }
 }
 
