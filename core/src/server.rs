@@ -172,6 +172,21 @@ impl Future for Server {
     }
 }
 
+/// Once the server is dropped, all the handlers should be destroyed.
+impl Drop for Server {
+    fn drop(&mut self) {
+        match self.handlers.handlers.write() {
+            Ok(mut handler_map) => {
+                handler_map.clear();
+            },
+            Err(e) => {
+                error!("Handler mutex is poisoned - {}", e);
+            }
+        }
+
+    }
+}
+
 
 impl ServerHandler for Server {
     fn process_request(&mut self, request: Request, sink: mpsc::Sender<OutgoingMessage>) {
