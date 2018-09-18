@@ -1,0 +1,7 @@
+[package]
+name = "jsonrpc-client-utils"
+version = "0.1.0"
+authors = ["Emīls Piņķis <emils@mullvad.net>"]
+
+[dependencies]
+futures = "0.1"
