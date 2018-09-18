@@ -1,14 +1,13 @@
-//! This crate adds support for subscriptions as defined in [here][1].
+//! This crate adds support for subscriptions as defined in [here].
 //!
-//! [1]: https://github.com/ethereum/go-ethereum/wiki/RPC-PUB-SUB
+//! [here]: https://github.com/ethereum/go-ethereum/wiki/RPC-PUB-SUB
 
 extern crate futures;
 extern crate jsonrpc_client_core;
+#[macro_use]
 extern crate serde;
 extern crate serde_json;
 
-#[macro_use]
-extern crate serde_derive;
 extern crate tokio;
 #[macro_use]
 extern crate log;
@@ -144,18 +143,17 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
             notification.clone(),
             Handler::Notification(Box::new(move |notification| {
                 let tx = handler_tx.clone();
-                if let Err(_) =
-                    if let Some(msg) = params_to_subscription_message(notification.params) {
-                        tx.unbounded_send(msg)
-                    } else {
-                        trace!(
-                            "Received notification with invalid parameters for subscription - {}",
-                            notification.method
-                        );
-                        Ok(())
-                    } {
-                    error!("Notification handler doesn't exist anymore");
-                };
+                match params_to_subscription_message(notification.params) {
+                    Some(msg) => {
+                        if let Err(_) = tx.unbounded_send(msg) {
+                            trace!("Notification handler doesn't exist anymore");
+                        }
+                    }
+                    None => error!(
+                        "Received notification with inavlid parameters for subscription - {}",
+                        notification.method
+                    ),
+                }
                 Box::new(futures::future::ok(()))
             })),
         );
@@ -176,7 +174,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         };
 
         self.notification_handlers
-            .insert(notification.clone(), notif_tx.clone());
+            .insert(notification, notif_tx.clone());
 
         notif_tx
     }
@@ -288,7 +286,10 @@ impl NotificationHandler {
         match self.current_future.take() {
             None => true,
             Some(mut fut) => match fut.poll() {
-                Ok(Async::NotReady) => false,
+                Ok(Async::NotReady) => {
+                    self.current_future = Some(fut);
+                    false
+                }
                 _ => true,
             },
         }
