@@ -58,6 +58,7 @@
 pub extern crate error_chain;
 extern crate futures;
 extern crate jsonrpc_core;
+extern crate jsonrpc_client_utils;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -86,8 +87,7 @@ mod macros;
 mod id_generator;
 use id_generator::IdGenerator;
 
-mod select_weak;
-use select_weak::SelectWithWeakExt;
+use jsonrpc_client_utils::select_weak::{self, SelectWithWeakExt};
 
 /// Module containing the _server_ part of the client, allowing the user to set callbacks for
 /// various method and notification requests coming in from the server. Does not work with HTTP.
