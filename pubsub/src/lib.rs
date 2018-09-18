@@ -219,7 +219,7 @@ struct NotificationHandler {
     messages: mpsc::UnboundedReceiver<SubscriberMsg>,
     unsub_method: String,
     client_handle: ClientHandle,
-    current_future: Option<Box<dyn Future<Item = (), Error = ()> + Send>>,
+    current_future: Option<Box<Future<Item = (), Error = ()> + Send>>,
     server_handlers: Handlers,
     should_shut_down: bool,
 }
