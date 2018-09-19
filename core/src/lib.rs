@@ -215,14 +215,19 @@ pub trait Transport: Sized {
 
     /// Creates a Client and a ClientHandle from a transport implementation.
     fn into_client(self) -> (Client<Self, server::Server>, ClientHandle) {
-        self.with_server(server::Server::new())
-    }
-
-    /// Creates a Client and a ClientHandle from a transport implementation and provides a custom
-    /// server implementation.
-    fn with_server<S: server::ServerHandler>(self, s: S) -> (Client<Self, S>, ClientHandle) {
         let (tx, rx) = self.io_pair();
-        Client::new(tx, rx, s)
+        Client::new(tx, rx)
+    }
+}
+
+/// A transport trait that should be implemented only for transports that support full duplex
+/// communication between the client and the server. DuplexTransport implementors allow the user of
+/// the library to specify a server handler.
+pub trait DuplexTransport: Transport {
+    /// Constructs a new client with the provided server handler.
+    fn with_server<S: server::ServerHandler>(self, s:S) -> (Client<Self, S>, ClientHandle) {
+        let (tx, rx) = self.io_pair();
+        Client::create_client(tx, rx, s)
     }
 }
 
@@ -263,14 +268,20 @@ enum IncomingMessage {
     Request(Request),
 }
 
-impl<T: Transport, S: server::ServerHandler> Client<T, S> {
+impl<T: Transport> Client<T, server::Server> {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
-    pub fn new(
+    fn new(transport_tx: T::Sink, transport_rx: T::Stream) -> (Self, ClientHandle) {
+        Self::create_client(transport_tx, transport_rx, server::Server::new())
+    }
+}
+
+impl<T: Transport, S: server::ServerHandler> Client<T, S> {
+    fn create_client(
         transport_tx: T::Sink,
         transport_rx: T::Stream,
         server_handler: S,
