@@ -112,7 +112,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         &mut self,
         sub_method: String,
         unsub_method: String,
-        notification: String,
+        notification_method: String,
         buffer_size: usize,
         sub_parameters: P,
     ) -> impl Future<Item = Subscription<T>, Error = Error>
@@ -123,10 +123,10 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         // Get a channel to an existing notification handler or spawn a new one.
         let chan = self
             .notification_handlers
-            .get(&notification)
+            .get(&notification_method)
             .filter(|c| c.is_closed())
             .map(|chan| Ok(chan.clone()))
-            .unwrap_or_else(|| self.spawn_notification_handler(notification.clone(), unsub_method));
+            .unwrap_or_else(|| self.spawn_notification_handler(notification_method.clone(), unsub_method));
 
 
         let (sub_tx, sub_rx) = mpsc::channel(buffer_size);
@@ -143,7 +143,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
                         {
                             debug!(
                                 "Notificaton handler for {} - {} already closed",
-                                notification, id
+                                notification_method, id
                             );
                         };
                         Ok(Subscription {
@@ -160,13 +160,13 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
 
     fn spawn_notification_handler(
         &mut self,
-        notification: String,
+        notification_method: String,
         unsub_method: String,
     ) -> Result<mpsc::UnboundedSender<SubscriberMsg>> {
         let (msg_tx, msg_rx) = mpsc::channel(0);
 
         self.handlers.add(
-            notification.clone(),
+            notification_method.clone(),
             Handler::Notification(Box::new(move |notification| {
                 let fut = match params_to_subscription_message(notification.params) {
                     Some(msg) => Either::A(
@@ -190,7 +190,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
 
         let (control_tx, control_rx) = mpsc::unbounded();
         let notification_handler = NotificationHandler::new(
-            notification.clone(),
+            notification_method.clone(),
             self.handlers.clone(),
             self.client_handle.clone(),
             unsub_method,
@@ -206,7 +206,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         };
 
         self.notification_handlers
-            .insert(notification, control_tx.clone());
+            .insert(notification_method, control_tx.clone());
 
         Ok(control_tx)
     }
