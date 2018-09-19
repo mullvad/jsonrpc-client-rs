@@ -11,7 +11,9 @@ use jsonrpc_core::types::{
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic};
+use std::result;
+use std::error;
 
 
 type MethodHandler =
@@ -38,32 +40,100 @@ impl Handler {
     }
 }
 
-/// A collection callbacks to be executed for specific notification and method JSON-RPC requests.
-#[derive(Clone)]
-pub struct Handlers {
-    handlers: Arc<RwLock<HashMap<String, Handler>>>,
+impl fmt::Debug for Handler {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "RPC {} handler", self.description())
+     }
 }
 
-impl Handlers {
+/// A failure to set a handler
+#[derive(Debug)]
+pub enum HandlerSettingError {
+    /// Can't set handler because a handler for the given method name is already set
+    AlreadyExists(Handler),
+    /// Server is already shutting down
+    Shutdown(Handler),
+}
+
+impl fmt::Display for HandlerSettingError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HandlerSettingError::AlreadyExists(_) => write!(f, "HandlerSettingError - Handler for the given method name is already set"),
+            HandlerSettingError::Shutdown(_) => write!(f, "HandlerSettingError - RPC client already shut down"),
+        }
+    }
+}
+impl error::Error for HandlerRemovalError {}
+
+/// A failure to remove a handler
+#[derive(Debug)]
+pub enum HandlerRemovalError{
+    /// Handler does not exist
+    NoHandler,
+    /// Server is already shutting down
+    Shutdown,
+}
+
+impl fmt::Display for HandlerRemovalError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HandlerRemovalError::NoHandler => write!(f, "HandlerError - Handler for the given method name is already set"),
+            HandlerRemovalError::Shutdown => write!(f, "HandlerError - RPC client already shut down"),
+        }
+    }
+}
+
+impl error::Error for HandlerSettingError {}
+
+
+
+/// A collection callbacks to be executed for specific notification and method JSON-RPC requests.
+#[derive(Clone)]
+pub struct ServerHandle {
+    handlers: Arc<RwLock<HashMap<String, Handler>>>,
+    is_shutdown: Arc<atomic::AtomicBool>,
+}
+
+impl ServerHandle {
     fn new() -> Self {
-        Handlers {
+        ServerHandle {
             handlers: Arc::new(RwLock::new(HashMap::new())),
+            is_shutdown: Arc::new(false.into()),
         }
     }
 
     /// Add a handler for a given method or notification.
-    pub fn add(&self, method: String, handler: Handler) {
+    pub fn add(&self, method: String, handler: Handler) -> result::Result<(), HandlerSettingError> {
+        if self.is_shutdown.load(atomic::Ordering::SeqCst) {
+            return Err(HandlerSettingError::Shutdown(handler));
+        };
         let mut map = self.handlers.write().unwrap();
+
+        if map.contains_key(&method) {
+            return Err(HandlerSettingError::AlreadyExists(handler));
+        };
+
         map.insert(method, handler);
+        Ok(())
     }
 
     /// Remove a handler for a given method or notification.
-    pub fn remove(&self, method: &str) {
+    pub fn remove(&self, method: &str) -> result::Result<(), HandlerRemovalError> {
+        if self.is_shutdown.load(atomic::Ordering::SeqCst) {
+            return Err(HandlerRemovalError::Shutdown);
+        };
+
         let mut map = self.handlers.write().unwrap();
-        map.remove(method);
+
+        if map.remove(method).is_some() {
+            Ok(())
+        } else {
+            Err(HandlerRemovalError::NoHandler)
+        }
     }
 
-    fn clear(&mut self) {
+    fn shutdown(&mut self) {
+        self.is_shutdown.store(true, atomic::Ordering::SeqCst);
         match self.handlers.write() {
             Ok(mut map) => {
                 map.clear();
@@ -106,9 +176,9 @@ impl Handlers {
 }
 
 
-impl fmt::Debug for Handlers {
+impl fmt::Debug for ServerHandle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Handlers{{\n")?;
+        write!(f, "ServerHandle{{\n")?;
         match self.handlers.read() {
             Ok(handlers) => {
                 for (method_name, callback) in handlers.iter() {
@@ -133,7 +203,7 @@ fn failure(id: Id, error: RpcError) -> Output {
 
 /// Default server implementation.
 pub struct Server {
-    handlers: Handlers,
+    handlers: ServerHandle,
     pending_futures: BTreeMap<u64, DrivableCall>,
     id_generator: IdGenerator,
 }
@@ -145,7 +215,7 @@ impl Server {
     /// Constructs a new server.
     pub fn new() -> Self {
         Self {
-            handlers: Handlers::new(),
+            handlers: ServerHandle::new(),
             pending_futures: BTreeMap::new(),
             id_generator: IdGenerator::new(),
         }
@@ -157,7 +227,7 @@ impl Server {
     }
 
     /// Access handler collection to add or remove handlers.
-    pub fn get_handlers(&self) -> Handlers {
+    pub fn get_handle(&self) -> ServerHandle {
         self.handlers.clone()
     }
 }
@@ -186,7 +256,7 @@ impl Future for Server {
 /// Once the server is dropped, all the handlers should be destroyed.
 impl Drop for Server {
     fn drop(&mut self) {
-        self.handlers.clear();
+        self.handlers.shutdown();
     }
 }
 

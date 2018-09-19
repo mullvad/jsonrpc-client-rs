@@ -13,11 +13,18 @@ extern crate tokio;
 #[macro_use]
 extern crate log;
 
-use futures::{future::Either, sync::mpsc, Async, Future, Poll, Sink, Stream};
+#[macro_use]
+extern crate error_chain;
+
+use futures::{future, future::Either, sync::mpsc, Async, Future, Poll, Sink, Stream};
 
 
-use jsonrpc_client_core::server::{types::Params, Handler, Handlers, Server};
-use jsonrpc_client_core::{ClientHandle, Error, ErrorKind, ResultExt, Transport};
+use jsonrpc_client_core::server::{
+    types::Params, Handler, HandlerSettingError, Server, ServerHandle,
+};
+use jsonrpc_client_core::{
+    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, Transport
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -25,6 +32,16 @@ use std::marker::PhantomData;
 use tokio::executor::Executor;
 
 use jsonrpc_client_utils::select_weak::{SelectWithWeak, SelectWithWeakExt};
+
+error_chain!{
+    links {
+        Core(CoreError, CoreErrorKind);
+    }
+
+    foreign_links {
+        HandlerError(HandlerSettingError);
+    }
+}
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionMessage {
@@ -41,15 +58,14 @@ pub struct Subscription<T: serde::de::DeserializeOwned> {
     _marker: PhantomData<T>,
 }
 
-
 impl<T: serde::de::DeserializeOwned> Stream for Subscription<T> {
     type Item = T;
-    type Error = Error;
+    type Error = CoreError;
 
-    fn poll(&mut self) -> Poll<Option<T>, Error> {
-        match self.rx.poll().map_err(|_: ()| ErrorKind::Shutdown)? {
+    fn poll(&mut self) -> Poll<Option<T>, CoreError> {
+        match self.rx.poll().map_err(|_: ()| CoreErrorKind::Shutdown)? {
             Async::Ready(Some(v)) => Ok(Async::Ready(Some(
-                serde_json::from_value(v).chain_err(|| ErrorKind::DeserializeError)?,
+                serde_json::from_value(v).map_err(|_| CoreErrorKind::DeserializeError)?,
             ))),
             Async::Ready(None) => Ok(Async::Ready(None)),
             Async::NotReady => Ok(Async::NotReady),
@@ -71,7 +87,7 @@ impl<T: serde::de::DeserializeOwned> Drop for Subscription<T> {
 #[derive(Debug)]
 pub struct Subscriber<E: Executor + Clone + Send + 'static> {
     client_handle: ClientHandle,
-    handlers: Handlers,
+    handlers: ServerHandle,
     notification_handlers: BTreeMap<String, mpsc::UnboundedSender<SubscriberMsg>>,
     executor: E,
 }
@@ -79,7 +95,7 @@ pub struct Subscriber<E: Executor + Clone + Send + 'static> {
 
 impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
     /// Constructs a new subscriber with the provided executor.
-    pub fn new(executor: E, client_handle: ClientHandle, handlers: Handlers) -> Self {
+    pub fn new(executor: E, client_handle: ClientHandle, handlers: ServerHandle) -> Self {
         let notification_handlers = BTreeMap::new();
         Self {
             client_handle,
@@ -109,37 +125,44 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
             .notification_handlers
             .get(&notification)
             .filter(|c| c.is_closed())
-            .map(Clone::clone)
+            .map(|chan| Ok(chan.clone()))
             .unwrap_or_else(|| self.spawn_notification_handler(notification.clone(), unsub_method));
 
 
         let (sub_tx, sub_rx) = mpsc::channel(buffer_size);
 
-        self.client_handle
-            .call_method(sub_method, &sub_parameters)
-            .and_then(move |id: SubscriptionId| {
-                if let Err(_) =
-                    chan.unbounded_send(SubscriberMsg::NewSubscriber(id.clone(), sub_tx))
-                {
-                    debug!(
-                        "Notificaton handler for {} - {} already closed",
-                        notification, id
-                    );
-                };
-                Ok(Subscription {
-                    rx: sub_rx,
-                    id: Some(id),
-                    handler_chan: chan.clone(),
-                    _marker: PhantomData::<T>,
-                })
-            })
+
+        match chan {
+            Ok(chan) => Either::A(
+                self.client_handle
+                    .call_method(sub_method, &sub_parameters)
+                    .map_err(|e| e.into())
+                    .and_then(move |id: SubscriptionId| {
+                        if let Err(_) =
+                            chan.unbounded_send(SubscriberMsg::NewSubscriber(id.clone(), sub_tx))
+                        {
+                            debug!(
+                                "Notificaton handler for {} - {} already closed",
+                                notification, id
+                            );
+                        };
+                        Ok(Subscription {
+                            rx: sub_rx,
+                            id: Some(id),
+                            handler_chan: chan.clone(),
+                            _marker: PhantomData::<T>,
+                        })
+                    }),
+            ),
+            Err(e) => Either::B(future::err(e)),
+        }
     }
 
     fn spawn_notification_handler(
         &mut self,
         notification: String,
         unsub_method: String,
-    ) -> mpsc::UnboundedSender<SubscriberMsg> {
+    ) -> Result<mpsc::UnboundedSender<SubscriberMsg>> {
         let (msg_tx, msg_rx) = mpsc::channel(0);
 
         self.handlers.add(
@@ -151,7 +174,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
                             .clone()
                             .send(msg)
                             .map(|_| ())
-                            .map_err(|_| ErrorKind::Shutdown.into()),
+                            .map_err(|_| CoreErrorKind::Shutdown.into()),
                     ),
                     None => {
                         error!(
@@ -163,7 +186,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
                 };
                 Box::new(fut)
             })),
-        );
+        )?;
 
         let (control_tx, control_rx) = mpsc::unbounded();
         let notification_handler = NotificationHandler::new(
@@ -185,7 +208,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         self.notification_handlers
             .insert(notification, control_tx.clone());
 
-        control_tx
+        Ok(control_tx)
     }
 }
 
@@ -227,20 +250,20 @@ struct NotificationHandler {
     unsub_method: String,
     client_handle: ClientHandle,
     current_future: Option<Box<dyn Future<Item = (), Error = ()> + Send>>,
-    server_handlers: Handlers,
+    server_handlers: ServerHandle,
     should_shut_down: bool,
 }
 
 impl Drop for NotificationHandler {
     fn drop(&mut self) {
-        self.server_handlers.remove(&self.notification_method);
+        let _ = self.server_handlers.remove(&self.notification_method);
     }
 }
 
 impl NotificationHandler {
     fn new(
         notification_method: String,
-        server_handlers: Handlers,
+        server_handlers: ServerHandle,
         client_handle: ClientHandle,
         unsub_method: String,
         subscription_messages: mpsc::Receiver<SubscriberMsg>,
@@ -334,7 +357,10 @@ impl Future for NotificationHandler {
         }
 
         if self.should_shut_down {
-            trace!("shutting down notification handler for notification '{}'", self.notification_method);
+            trace!(
+                "shutting down notification handler for notification '{}'",
+                self.notification_method
+            );
             Ok(Async::Ready(()))
         } else {
             Ok(Async::NotReady)
@@ -369,7 +395,7 @@ impl<T: Transport> SubscriberTransport for T {
         Subscriber<E>,
     ) {
         let server = Server::new();
-        let handlers = server.get_handlers();
+        let handlers = server.get_handle();
         let (client, client_handle) = self.with_server(server);
         let subscriber = Subscriber::new(executor, client_handle.clone(), handlers);
         (client, client_handle, subscriber)
