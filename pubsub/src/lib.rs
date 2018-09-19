@@ -23,7 +23,7 @@ use jsonrpc_client_core::server::{
     types::Params, Handler, HandlerSettingError, Server, ServerHandle,
 };
 use jsonrpc_client_core::{
-    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, Transport
+    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, Transport,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -126,7 +126,9 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
             .get(&notification_method)
             .filter(|c| c.is_closed())
             .map(|chan| Ok(chan.clone()))
-            .unwrap_or_else(|| self.spawn_notification_handler(notification_method.clone(), unsub_method));
+            .unwrap_or_else(|| {
+                self.spawn_notification_handler(notification_method.clone(), unsub_method)
+            });
 
 
         let (sub_tx, sub_rx) = mpsc::channel(buffer_size);
