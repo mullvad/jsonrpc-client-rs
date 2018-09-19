@@ -4,6 +4,7 @@
 
 extern crate futures;
 extern crate jsonrpc_client_core;
+extern crate jsonrpc_client_utils;
 #[macro_use]
 extern crate serde;
 extern crate serde_json;
@@ -12,7 +13,7 @@ extern crate tokio;
 #[macro_use]
 extern crate log;
 
-use futures::{sync::mpsc, Async, Future, Poll, Sink, Stream};
+use futures::{future::Either, sync::mpsc, Async, Future, Poll, Sink, Stream};
 
 
 use jsonrpc_client_core::server::{types::Params, Handler, Handlers, Server};
@@ -22,6 +23,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
 use tokio::executor::Executor;
+
+use jsonrpc_client_utils::select_weak::{SelectWithWeak, SelectWithWeakExt};
 
 #[derive(Debug, Deserialize)]
 struct SubscriptionMessage {
@@ -137,33 +140,39 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         notification: String,
         unsub_method: String,
     ) -> mpsc::UnboundedSender<SubscriberMsg> {
-        let (notif_tx, notif_rx) = mpsc::unbounded();
-        let handler_tx = notif_tx.clone();
+        let (msg_tx, msg_rx) = mpsc::channel(0);
+
         self.handlers.add(
             notification.clone(),
             Handler::Notification(Box::new(move |notification| {
-                let tx = handler_tx.clone();
-                match params_to_subscription_message(notification.params) {
-                    Some(msg) => {
-                        if let Err(_) = tx.unbounded_send(msg) {
-                            trace!("Notification handler doesn't exist anymore");
-                        }
-                    }
-                    None => error!(
-                        "Received notification with invalid parameters for subscription - {}",
-                        notification.method
+                let fut = match params_to_subscription_message(notification.params) {
+                    Some(msg) => Either::A(
+                        msg_tx
+                            .clone()
+                            .send(msg)
+                            .map(|_| ())
+                            .map_err(|_| ErrorKind::Shutdown.into()),
                     ),
-                }
-                Box::new(futures::future::ok(()))
+                    None => {
+                        error!(
+                            "Received notification with invalid parameters for subscription - {}",
+                            notification.method
+                        );
+                        Either::B(futures::future::ok(()))
+                    }
+                };
+                Box::new(fut)
             })),
         );
 
+        let (control_tx, control_rx) = mpsc::unbounded();
         let notification_handler = NotificationHandler::new(
             notification.clone(),
             self.handlers.clone(),
             self.client_handle.clone(),
             unsub_method,
-            notif_rx,
+            msg_rx,
+            control_rx,
         );
 
         if let Err(e) = self
@@ -174,9 +183,9 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         };
 
         self.notification_handlers
-            .insert(notification, notif_tx.clone());
+            .insert(notification.clone(), control_tx.clone());
 
-        notif_tx
+        control_tx
     }
 }
 
@@ -214,7 +223,7 @@ enum SubscriberMsg {
 struct NotificationHandler {
     notification: String,
     subscribers: BTreeMap<SubscriptionId, mpsc::Sender<Value>>,
-    messages: mpsc::UnboundedReceiver<SubscriberMsg>,
+    messages: SelectWithWeak<mpsc::Receiver<SubscriberMsg>, mpsc::UnboundedReceiver<SubscriberMsg>>,
     unsub_method: String,
     client_handle: ClientHandle,
     current_future: Option<Box<dyn Future<Item = (), Error = ()> + Send>>,
@@ -234,8 +243,10 @@ impl NotificationHandler {
         server_handlers: Handlers,
         client_handle: ClientHandle,
         unsub_method: String,
-        messages: mpsc::UnboundedReceiver<SubscriberMsg>,
+        subscription_messages: mpsc::Receiver<SubscriberMsg>,
+        control_messages: mpsc::UnboundedReceiver<SubscriberMsg>,
     ) -> Self {
+        let messages = subscription_messages.select_with_weak(control_messages);
         Self {
             notification,
             messages,
@@ -323,7 +334,7 @@ impl Future for NotificationHandler {
         }
 
         if self.should_shut_down {
-            trace!("shutting down notification handler");
+            trace!("shutting down notification handler for notification '{}'", self.notification);
             Ok(Async::Ready(()))
         } else {
             Ok(Async::NotReady)
