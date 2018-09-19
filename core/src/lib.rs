@@ -215,14 +215,17 @@ pub trait Transport: Sized {
 
     /// Creates a Client and a ClientHandle from a transport implementation.
     fn into_client(self) -> (Client<Self, server::Server>, ClientHandle) {
-        self.with_server(server::Server::new())
+        Client::new(self)
     }
+}
 
-    /// Creates a Client and a ClientHandle from a transport implementation and provides a custom
-    /// server implementation.
-    fn with_server<S: server::ServerHandler>(self, s: S) -> (Client<Self, S>, ClientHandle) {
-        let (tx, rx) = self.io_pair();
-        Client::new(tx, rx, s)
+/// A transport trait that should be implemented only for transports that support full duplex
+/// communication between the client and the server. DuplexTransport implementors allow the user of
+/// the library to specify a server handler.
+pub trait DuplexTransport: Transport {
+    /// Constructs a new client with the provided server handler.
+    fn with_server<S: server::ServerHandler>(self, s:S) -> (Client<Self, S>, ClientHandle) {
+        Client::new_with_server(self, s)
     }
 }
 
@@ -263,18 +266,24 @@ enum IncomingMessage {
     Request(Request),
 }
 
-impl<T: Transport, S: server::ServerHandler> Client<T, S> {
+impl<T: Transport> Client<T, server::Server> {
     /// To create a new Client, one must provide a transport sink and stream pair. The transport
     /// sinks are expected to send and receive strings which should hold exactly one JSON
     /// object. If any error is returned by either the sink or the stream, this future will fail,
     /// and all pending requests will be dropped. If the transport stream finishes, this future
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
-    pub fn new(
-        transport_tx: T::Sink,
-        transport_rx: T::Stream,
+    pub fn new(transport: T) -> (Self, ClientHandle) {
+        Self::new_with_server(transport, server::Server::new())
+    }
+}
+
+impl<T: Transport, S: server::ServerHandler> Client<T, S> {
+    fn new_with_server(
+        transport: T,
         server_handler: S,
     ) -> (Self, ClientHandle) {
+        let (transport_tx, transport_rx) = transport.io_pair();
         let (client_handle_tx, client_handle_rx) = mpsc::channel(0);
         let (server_response_tx, server_response_rx) = mpsc::channel(0);
 
