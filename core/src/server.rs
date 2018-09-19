@@ -139,7 +139,7 @@ impl ServerHandle {
                 map.clear();
             },
             Err(e) => {
-                error!("Handler mutex is poisoned - {}", e);
+                error!("ServerHandle mutex is poisoned - {}", e);
             }
         }
     }
