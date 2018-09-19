@@ -235,7 +235,7 @@ impl ServerHandler for Server {
         match driveable_future.poll() {
             Ok(Async::NotReady) => self.push_future(Box::new(driveable_future)),
             Err(e) => self.push_future(Box::new(future::err(e))),
-            _ => (),
+            Ok(Async::Ready(())) => (),
         };
     }
 }
