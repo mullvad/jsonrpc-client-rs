@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 ### Changed
-- Bumped minimum version requirement from 1.26 to 1.28
+- Bumped minimum version requirement from 1.26 to 1.27
 
 ### Added
 - Added subscription support
