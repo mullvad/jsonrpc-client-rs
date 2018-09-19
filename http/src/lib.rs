@@ -436,7 +436,10 @@ impl HttpHandle {
 
     /// Sends an HTTP request with the given body, returning a future that will resolve to the
     /// corresponding response.
-    pub fn send(&self, json_data: Vec<u8>) -> Box<dyn Future<Item = Vec<u8>, Error = Error> + Send> {
+    pub fn send(
+        &self,
+        json_data: Vec<u8>,
+    ) -> Box<dyn Future<Item = Vec<u8>, Error = Error> + Send> {
         Box::new(self.send_fut(json_data))
     }
 }
