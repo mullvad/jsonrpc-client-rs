@@ -14,8 +14,10 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 
-type MethodHandler = Box<Fn(MethodCall) -> Box<Future<Item = Output, Error = Error>>>;
-type NotificationHandler = Box<Fn(Notification) -> Box<Future<Item = (), Error = Error>>>;
+type MethodHandler =
+    Box<dyn Fn(MethodCall) -> Box<dyn Future<Item = Output, Error = Error> + Send> + Send>;
+type NotificationHandler =
+    Box<dyn Fn(Notification) -> Box<dyn Future<Item = (), Error = Error> + Send> + Send>;
 
 
 /// A callback to be called in response to either a notification or a method call coming in from
