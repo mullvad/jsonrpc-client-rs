@@ -183,7 +183,7 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
         };
 
         self.notification_handlers
-            .insert(notification.clone(), control_tx.clone());
+            .insert(notification, control_tx.clone());
 
         control_tx
     }
@@ -221,7 +221,7 @@ enum SubscriberMsg {
 
 // A single notification can receive messages for different subscribers for the same notification.
 struct NotificationHandler {
-    notification: String,
+    notification_method: String,
     subscribers: BTreeMap<SubscriptionId, mpsc::Sender<Value>>,
     messages: SelectWithWeak<mpsc::Receiver<SubscriberMsg>, mpsc::UnboundedReceiver<SubscriberMsg>>,
     unsub_method: String,
@@ -233,13 +233,13 @@ struct NotificationHandler {
 
 impl Drop for NotificationHandler {
     fn drop(&mut self) {
-        self.server_handlers.remove(&self.notification);
+        self.server_handlers.remove(&self.notification_method);
     }
 }
 
 impl NotificationHandler {
     fn new(
-        notification: String,
+        notification_method: String,
         server_handlers: Handlers,
         client_handle: ClientHandle,
         unsub_method: String,
@@ -248,7 +248,7 @@ impl NotificationHandler {
     ) -> Self {
         let messages = subscription_messages.select_with_weak(control_messages);
         Self {
-            notification,
+            notification_method,
             messages,
             server_handlers,
             unsub_method,
@@ -334,7 +334,7 @@ impl Future for NotificationHandler {
         }
 
         if self.should_shut_down {
-            trace!("shutting down notification handler for notification '{}'", self.notification);
+            trace!("shutting down notification handler for notification '{}'", self.notification_method);
             Ok(Async::Ready(()))
         } else {
             Ok(Async::NotReady)
