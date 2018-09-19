@@ -63,6 +63,17 @@ impl Handlers {
         map.remove(method);
     }
 
+    fn clear(&mut self) {
+        match self.handlers.write() {
+            Ok(mut map) => {
+                map.clear();
+            },
+            Err(e) => {
+                error!("Handler mutex is poisoned - {}", e);
+            }
+        }
+    }
+
     fn handle_single_call(&mut self, call: Call) -> PendingCall {
         match call {
             Call::MethodCall(method_call) => self.handle_method_call(method_call),
@@ -168,6 +179,13 @@ impl Future for Server {
         }
 
         Ok(Async::NotReady)
+    }
+}
+
+/// Once the server is dropped, all the handlers should be destroyed.
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.handlers.clear();
     }
 }
 
