@@ -16,7 +16,7 @@ jsonrpc-core = "8.0"
 log = "0.4"
 serde = { version = "1.0", features = [ "derive" ] }
 serde_json = "1.0"
-jsonrpc-client-utils = { path = "../utils/" }
+jsonrpc-client-utils = { path = "../utils/", version = "0.1" }
 
 
 [badges]
