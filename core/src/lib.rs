@@ -57,8 +57,8 @@
 #[macro_use]
 pub extern crate error_chain;
 extern crate futures;
-extern crate jsonrpc_core;
 extern crate jsonrpc_client_utils;
+extern crate jsonrpc_core;
 #[macro_use]
 extern crate log;
 #[macro_use]

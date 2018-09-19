@@ -10,10 +10,10 @@ use jsonrpc_core::types::{
 };
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt;
-use std::sync::{Arc, RwLock, atomic};
-use std::result;
 use std::error;
+use std::fmt;
+use std::result;
+use std::sync::{atomic, Arc, RwLock};
 
 
 type MethodHandler =
@@ -41,50 +41,90 @@ impl Handler {
 }
 
 impl fmt::Debug for Handler {
-     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "RPC {} handler", self.description())
-     }
+    }
 }
 
-/// A failure to set a handler
+/// An error that is returned when one fails to set a handler
 #[derive(Debug)]
-pub enum HandlerSettingError {
-    /// Can't set handler because a handler for the given method name is already set
-    AlreadyExists(Handler),
-    /// Server is already shutting down
-    Shutdown(Handler),
+pub struct HandlerSettingError {
+    /// The handler that wasn't set.
+    pub handler: Handler,
+    /// Kind of error encountered whilst trying to set handler.
+    pub kind: HandleError,
 }
 
 impl fmt::Display for HandlerSettingError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            HandlerSettingError::AlreadyExists(_) => write!(f, "HandlerSettingError - Handler for the given method name is already set"),
-            HandlerSettingError::Shutdown(_) => write!(f, "HandlerSettingError - RPC client already shut down"),
+        write!(
+            f,
+            "Failure to set new {} - {}",
+            self.handler.description(),
+            self.kind
+        )
+    }
+}
+
+impl HandlerSettingError {
+    fn already_exists(handler: Handler) -> Self {
+        Self {
+            handler,
+            kind: HandleError::AlreadyExists,
+        }
+    }
+
+    fn handler_crash(handler: Handler) -> Self {
+        Self {
+            handler,
+            kind: HandleError::HandlerCrash,
+        }
+    }
+
+    fn shutdown(handler: Handler) -> Self {
+        Self {
+            handler,
+            kind: HandleError::Shutdown,
         }
     }
 }
-impl error::Error for HandlerRemovalError {}
 
-/// A failure to remove a handler
+
+impl error::Error for HandleError {}
+
+/// Failure kinds that can occur when managing the server handle.
 #[derive(Debug)]
-pub enum HandlerRemovalError{
+pub enum HandleError {
+    /// Handler already exists
+    AlreadyExists,
     /// Handler does not exist
     NoHandler,
     /// Server is already shutting down
     Shutdown,
+    /// A callback paniced!
+    HandlerCrash,
 }
 
-impl fmt::Display for HandlerRemovalError {
+impl fmt::Display for HandleError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            HandlerRemovalError::NoHandler => write!(f, "HandlerError - Handler for the given method name is already set"),
-            HandlerRemovalError::Shutdown => write!(f, "HandlerError - RPC client already shut down"),
+            HandleError::AlreadyExists => write!(
+                f,
+                "HandlerError - Handler for the given method name is already set"
+            ),
+            HandleError::NoHandler => write!(
+                f,
+                "HandlerError - Handler for the given method name does not exist"
+            ),
+            HandleError::Shutdown => write!(f, "HandlerError - RPC client already shut down"),
+            HandleError::HandlerCrash => {
+                write!(f, "HandleError - a method handler panicked, shutting down")
+            }
         }
     }
 }
 
 impl error::Error for HandlerSettingError {}
-
 
 
 /// A collection callbacks to be executed for specific notification and method JSON-RPC requests.
@@ -105,12 +145,15 @@ impl ServerHandle {
     /// Add a handler for a given method or notification.
     pub fn add(&self, method: String, handler: Handler) -> result::Result<(), HandlerSettingError> {
         if self.is_shutdown.load(atomic::Ordering::SeqCst) {
-            return Err(HandlerSettingError::Shutdown(handler));
+            return Err(HandlerSettingError::shutdown(handler));
         };
-        let mut map = self.handlers.write().unwrap();
+        let mut map = match self.handlers.write() {
+            Ok(map) => map,
+            Err(_) => return Err(HandlerSettingError::handler_crash(handler)),
+        };
 
         if map.contains_key(&method) {
-            return Err(HandlerSettingError::AlreadyExists(handler));
+            return Err(HandlerSettingError::already_exists(handler));
         };
 
         map.insert(method, handler);
@@ -118,9 +161,9 @@ impl ServerHandle {
     }
 
     /// Remove a handler for a given method or notification.
-    pub fn remove(&self, method: &str) -> result::Result<(), HandlerRemovalError> {
+    pub fn remove(&self, method: &str) -> result::Result<(), HandleError> {
         if self.is_shutdown.load(atomic::Ordering::SeqCst) {
-            return Err(HandlerRemovalError::Shutdown);
+            return Err(HandleError::Shutdown);
         };
 
         let mut map = self.handlers.write().unwrap();
@@ -128,7 +171,7 @@ impl ServerHandle {
         if map.remove(method).is_some() {
             Ok(())
         } else {
-            Err(HandlerRemovalError::NoHandler)
+            Err(HandleError::NoHandler)
         }
     }
 
@@ -137,11 +180,15 @@ impl ServerHandle {
         match self.handlers.write() {
             Ok(mut map) => {
                 map.clear();
-            },
+            }
             Err(e) => {
                 error!("ServerHandle mutex is poisoned - {}", e);
             }
         }
+    }
+
+    fn is_poisoned(&mut self) -> bool {
+        self.handlers.is_poisoned()
     }
 
     fn handle_single_call(&mut self, call: Call) -> PendingCall {
@@ -159,6 +206,14 @@ impl ServerHandle {
 
         match handlers.get(&method_call.method) {
             Some(Handler::Method(handler)) => Box::new(handler(method_call).map(Some)),
+            // Some(Handler::Method(handler)) => {
+            //     let fut = panic::catch_unwind(|| Either::A(handler(method_call).map(Some)))
+            //         .unwrap_or(Either::B(future::ok(Some(failure(
+            //             method_call.id,
+            //             RpcError::internal_error(),
+            //         )))));
+            //     Box::new(fut)
+            // }
             _ => Box::new(future::ok(Some(failure(
                 method_call.id,
                 RpcError::method_not_found(),
@@ -237,6 +292,9 @@ impl Future for Server {
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<()>> {
+        if self.handlers.is_poisoned() {
+            return Err(ErrorKind::Shutdown.into());
+        }
         let polled: Result<Vec<(u64, Async<()>)>> = self
             .pending_futures
             .iter_mut()
