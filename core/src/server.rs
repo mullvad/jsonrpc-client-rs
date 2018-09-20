@@ -21,6 +21,9 @@ type MethodHandler =
 type NotificationHandler =
     Box<dyn Fn(Notification) -> Box<dyn Future<Item = (), Error = Error> + Send> + Send + Sync>;
 
+type PendingCall = Box<Future<Item = Option<Output>, Error = Error> + Send>;
+type DrivableCall = Box<Future<Item = (), Error = Error> + Send>;
+
 
 /// A callback to be called in response to either a notification or a method call coming in from
 /// the server.
@@ -187,11 +190,11 @@ impl ServerHandle {
         }
     }
 
-    fn is_poisoned(&mut self) -> bool {
+    fn is_poisoned(&self) -> bool {
         self.handlers.is_poisoned()
     }
 
-    fn handle_single_call(&mut self, call: Call) -> PendingCall {
+    fn handle_single_call(&self, call: Call) -> PendingCall {
         match call {
             Call::MethodCall(method_call) => self.handle_method_call(method_call),
             Call::Notification(notification) => self.handle_notification_call(notification),
@@ -206,14 +209,6 @@ impl ServerHandle {
 
         match handlers.get(&method_call.method) {
             Some(Handler::Method(handler)) => Box::new(handler(method_call).map(Some)),
-            // Some(Handler::Method(handler)) => {
-            //     let fut = panic::catch_unwind(|| Either::A(handler(method_call).map(Some)))
-            //         .unwrap_or(Either::B(future::ok(Some(failure(
-            //             method_call.id,
-            //             RpcError::internal_error(),
-            //         )))));
-            //     Box::new(fut)
-            // }
             _ => Box::new(future::ok(Some(failure(
                 method_call.id,
                 RpcError::method_not_found(),
@@ -262,9 +257,6 @@ pub struct Server {
     pending_futures: BTreeMap<u64, DrivableCall>,
     id_generator: IdGenerator,
 }
-
-type PendingCall = Box<Future<Item = Option<Output>, Error = Error> + Send>;
-type DrivableCall = Box<Future<Item = (), Error = Error> + Send>;
 
 impl Server {
     /// Constructs a new server.
@@ -320,7 +312,11 @@ impl Drop for Server {
 
 
 impl ServerHandler for Server {
-    fn process_request(&mut self, request: Request, sink: mpsc::Sender<OutgoingMessage>) {
+    fn process_request(
+        &mut self,
+        request: Request,
+        sink: mpsc::Sender<OutgoingMessage>,
+    ) -> Result<()> {
         let mut driveable_future = match request {
             Request::Single(req) => {
                 let driveable_future =
@@ -365,6 +361,7 @@ impl ServerHandler for Server {
             Err(e) => self.push_future(Box::new(future::err(e))),
             Ok(Async::Ready(())) => (),
         };
+        Ok(())
     }
 }
 
@@ -373,5 +370,5 @@ impl ServerHandler for Server {
 pub trait ServerHandler: Future<Item = (), Error = Error> {
     /// Handles a request coming in from the server, optionally sending a result back to the
     /// server.
-    fn process_request(&mut self, Request, sender: mpsc::Sender<OutgoingMessage>);
+    fn process_request(&mut self, Request, sender: mpsc::Sender<OutgoingMessage>) -> Result<()>;
 }
