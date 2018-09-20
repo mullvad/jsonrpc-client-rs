@@ -77,13 +77,6 @@ impl HandlerSettingError {
         }
     }
 
-    fn handler_crash(handler: Handler) -> Self {
-        Self {
-            handler,
-            kind: HandleError::HandlerCrash,
-        }
-    }
-
     fn shutdown(handler: Handler) -> Self {
         Self {
             handler,
@@ -150,11 +143,8 @@ impl ServerHandle {
         if self.is_shutdown.load(atomic::Ordering::SeqCst) {
             return Err(HandlerSettingError::shutdown(handler));
         };
-        let mut map = match self.handlers.write() {
-            Ok(map) => map,
-            Err(_) => return Err(HandlerSettingError::handler_crash(handler)),
-        };
 
+        let mut map = self.handlers.write().unwrap();
         if map.contains_key(&method) {
             return Err(HandlerSettingError::already_exists(handler));
         };
@@ -180,14 +170,7 @@ impl ServerHandle {
 
     fn shutdown(&mut self) {
         self.is_shutdown.store(true, atomic::Ordering::SeqCst);
-        match self.handlers.write() {
-            Ok(mut map) => {
-                map.clear();
-            }
-            Err(e) => {
-                error!("ServerHandle mutex is poisoned - {}", e);
-            }
-        }
+        self.handlers.write().unwrap().clear();
     }
 
     fn is_poisoned(&self) -> bool {
@@ -253,7 +236,7 @@ fn failure(id: Id, error: RpcError) -> Output {
 
 /// Default server implementation.
 pub struct Server {
-    handlers: ServerHandle,
+    handler_map: ServerHandle,
     pending_futures: BTreeMap<u64, DrivableCall>,
     id_generator: IdGenerator,
 }
@@ -262,7 +245,7 @@ impl Server {
     /// Constructs a new server.
     pub fn new() -> Self {
         Self {
-            handlers: ServerHandle::new(),
+            handler_map: ServerHandle::new(),
             pending_futures: BTreeMap::new(),
             id_generator: IdGenerator::new(),
         }
@@ -275,7 +258,7 @@ impl Server {
 
     /// Access handler collection to add or remove handlers.
     pub fn get_handle(&self) -> ServerHandle {
-        self.handlers.clone()
+        self.handler_map.clone()
     }
 }
 
@@ -284,7 +267,7 @@ impl Future for Server {
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<()>> {
-        if self.handlers.is_poisoned() {
+        if self.handler_map.is_poisoned() {
             return Err(ErrorKind::Shutdown.into());
         }
         let polled: Result<Vec<(u64, Async<()>)>> = self
@@ -306,7 +289,7 @@ impl Future for Server {
 /// Once the server is dropped, all the handlers should be destroyed.
 impl Drop for Server {
     fn drop(&mut self) {
-        self.handlers.shutdown();
+        self.handler_map.shutdown();
     }
 }
 
@@ -320,7 +303,7 @@ impl ServerHandler for Server {
         let mut driveable_future = match request {
             Request::Single(req) => {
                 let driveable_future =
-                    self.handlers
+                    self.handler_map
                         .handle_single_call(req)
                         .and_then(move |output| match output {
                             Some(response) => Either::A(
@@ -337,7 +320,7 @@ impl ServerHandler for Server {
                 let fut = stream::futures_unordered(
                     requests
                         .into_iter()
-                        .map(|call| self.handlers.handle_single_call(call)),
+                        .map(|call| self.handler_map.handle_single_call(call)),
                 ).filter_map(|maybe_response| maybe_response)
                 .collect()
                 .and_then(|results| {
