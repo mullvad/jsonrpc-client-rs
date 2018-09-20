@@ -23,7 +23,7 @@ use jsonrpc_client_core::server::{
     types::Params, Handler, HandlerSettingError, Server, ServerHandle,
 };
 use jsonrpc_client_core::{
-    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, DuplexTransport,
+    ClientHandle, DuplexTransport, Error as CoreError, ErrorKind as CoreErrorKind,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -386,7 +386,7 @@ pub trait SubscriberTransport: DuplexTransport {
 
 /// Subscriber transport trait allows one to create a client future, a subscriber and a client
 /// handle from a valid JSON-RPC transport.
-impl<T: Transport> SubscriberTransport for T {
+impl<T: DuplexTransport> SubscriberTransport for T {
     /// Constructs a new client, client handle and a subscriber.
     fn subscriber_client<E: Executor + Clone + Send>(
         self,
