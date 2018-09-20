@@ -23,7 +23,7 @@ use jsonrpc_client_core::server::{
     types::Params, Handler, HandlerSettingError, Server, ServerHandle,
 };
 use jsonrpc_client_core::{
-    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, Transport,
+    ClientHandle, Error as CoreError, ErrorKind as CoreErrorKind, DuplexTransport,
 };
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -371,7 +371,7 @@ impl Future for NotificationHandler {
 }
 
 /// A trait for constructing the usual client handles with coupled `Subscriber` structs.
-pub trait SubscriberTransport: Transport {
+pub trait SubscriberTransport: DuplexTransport {
     /// Constructs a new client, client handle and a subscriber.
     fn subscriber_client<E: Executor + Clone + Send>(
         self,
@@ -403,7 +403,3 @@ impl<T: Transport> SubscriberTransport for T {
         (client, client_handle, subscriber)
     }
 }
-
-// TODO: once negative trait bounds are fully implemented, uncomment the lines below
-// extern crate jsonrpc_client_http;
-// impl !SubscriberTransport for jsonrpc_client_http::HttpHandle {}
