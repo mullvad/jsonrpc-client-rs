@@ -51,15 +51,14 @@
 //!     println!("{} {} {}", result1, result2, result3);
 //! }
 //! ```
-//!
 
 #![deny(missing_docs)]
 
 #[macro_use]
 pub extern crate error_chain;
 extern crate futures;
-extern crate jsonrpc_core;
 extern crate jsonrpc_client_utils;
+extern crate jsonrpc_core;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -223,7 +222,7 @@ pub trait Transport: Sized + Send{
 /// the library to specify a server handler.
 pub trait DuplexTransport: Transport {
     /// Constructs a new client with the provided server handler.
-    fn with_server<S: server::ServerHandler>(self, s:S) -> (Client<Self, S>, ClientHandle) {
+    fn with_server<S: server::ServerHandler>(self, s: S) -> (Client<Self, S>, ClientHandle) {
         Client::new_with_server(self, s)
     }
 }
@@ -273,7 +272,8 @@ impl<T: Transport> Client<T, server::Server> {
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
     pub fn new(transport: T) -> (Self, ClientHandle) {
-        Self::new_with_server(transport, server::Server::new())
+        let (server, _) = server::Server::new();
+        Self::new_with_server(transport, server)
     }
 }
 
@@ -285,10 +285,7 @@ impl<T: DuplexTransport, S: server::ServerHandler> Client<T, S> {
 }
 
 impl<T: Transport, S: server::ServerHandler> Client<T, S> {
-    fn new_with_server(
-        transport: T,
-        server_handler: S,
-    ) -> (Self, ClientHandle) {
+    fn new_with_server(transport: T, server_handler: S) -> (Self, ClientHandle) {
         let (transport_tx, transport_rx) = transport.io_pair();
         let (client_handle_tx, client_handle_rx) = mpsc::channel(0);
         let (server_response_tx, server_response_rx) = mpsc::channel(0);
@@ -375,12 +372,12 @@ impl<T: Transport, S: server::ServerHandler> Client<T, S> {
     }
 
     fn handle_transport_rx_payload(&mut self, payload: &str) -> Result<()> {
-        let msg: IncomingMessage = serde_json::from_str(&payload)
-            .chain_err(|| ErrorKind::DeserializeError)?;
+        let msg: IncomingMessage =
+            serde_json::from_str(&payload).chain_err(|| ErrorKind::DeserializeError)?;
         match msg {
-            IncomingMessage::Request(req) => Ok(self
+            IncomingMessage::Request(req) => self
                 .server_handler
-                .process_request(req, self.server_response_tx.clone())),
+                .process_request(req, self.server_response_tx.clone()),
             IncomingMessage::Response(response) => self.handle_response(response),
         }
     }
