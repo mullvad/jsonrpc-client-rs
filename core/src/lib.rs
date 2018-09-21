@@ -199,15 +199,15 @@ impl ClientHandle {
 
 
 /// A Transport allows one to send and receive JSON objects to a JSON-RPC server.
-pub trait Transport: Sized {
+pub trait Transport: Sized + Send{
     /// A transport specific error
     type Error: ::std::error::Error + Send + 'static;
     /// A stream of strings, each of which represent a single JSON value that is either an array or
     /// an object used to receive messages from a JSON-RPC server.
-    type Stream: Stream<Item = String, Error = Self::Error>;
+    type Stream: Stream<Item = String, Error = Self::Error> + Send;
     /// A sink of strings, each of which represent a single JSON value that is either an array or an
     /// object used to send messages to a JSON-RPC server.
-    type Sink: Sink<SinkItem = String, SinkError = Self::Error>;
+    type Sink: Sink<SinkItem = String, SinkError = Self::Error> + Send;
 
     /// Transforms the transport implementation into a sink and a stream.
     fn io_pair(self) -> (Self::Sink, Self::Stream);
