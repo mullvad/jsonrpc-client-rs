@@ -2,7 +2,11 @@ use super::{Error, ErrorKind, OutgoingMessage, Result};
 use id_generator::IdGenerator;
 
 use futures::future::Either;
-use futures::{future, stream, sync::mpsc, Async, Future, Sink, Stream};
+use futures::{
+    future, stream,
+    sync::{mpsc, oneshot},
+    Async, Future, Sink, Stream,
+};
 pub use jsonrpc_core::types;
 use jsonrpc_core::types::{
     Call, Error as RpcError, Failure, Id, MethodCall, Notification, Output, Request, Response,
@@ -13,7 +17,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::error;
 use std::fmt;
 use std::result;
-use std::sync::{atomic, Arc, RwLock};
 
 
 type MethodHandler =
@@ -55,7 +58,7 @@ pub struct HandlerSettingError {
     /// The handler that wasn't set.
     pub handler: Handler,
     /// Kind of error encountered whilst trying to set handler.
-    pub kind: HandleError,
+    pub kind: HandlerError,
 }
 
 impl fmt::Display for HandlerSettingError {
@@ -73,24 +76,24 @@ impl HandlerSettingError {
     fn already_exists(handler: Handler) -> Self {
         Self {
             handler,
-            kind: HandleError::AlreadyExists,
+            kind: HandlerError::AlreadyExists,
         }
     }
 
     fn shutdown(handler: Handler) -> Self {
         Self {
             handler,
-            kind: HandleError::Shutdown,
+            kind: HandlerError::Shutdown,
         }
     }
 }
 
 
-impl error::Error for HandleError {}
+impl error::Error for HandlerError {}
 
 /// Failure kinds that can occur when managing the server handle.
 #[derive(Debug)]
-pub enum HandleError {
+pub enum HandlerError {
     /// Handler already exists
     AlreadyExists,
     /// Handler does not exist
@@ -101,20 +104,20 @@ pub enum HandleError {
     HandlerCrash,
 }
 
-impl fmt::Display for HandleError {
+impl fmt::Display for HandlerError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            HandleError::AlreadyExists => write!(
+            HandlerError::AlreadyExists => write!(
                 f,
                 "HandlerError - Handler for the given method name is already set"
             ),
-            HandleError::NoHandler => write!(
+            HandlerError::NoHandler => write!(
                 f,
                 "HandlerError - Handler for the given method name does not exist"
             ),
-            HandleError::Shutdown => write!(f, "HandlerError - RPC client already shut down"),
-            HandleError::HandlerCrash => {
-                write!(f, "HandleError - a method handler panicked, shutting down")
+            HandlerError::Shutdown => write!(f, "HandlerError - RPC client already shut down"),
+            HandlerError::HandlerCrash => {
+                write!(f, "HandlerError - a method handler panicked, shutting down")
             }
         }
     }
@@ -124,57 +127,42 @@ impl error::Error for HandlerSettingError {}
 
 
 /// A collection callbacks to be executed for specific notification and method JSON-RPC requests.
-#[derive(Clone)]
-pub struct ServerHandle {
-    handlers: Arc<RwLock<HashMap<String, Handler>>>,
-    is_shutdown: Arc<atomic::AtomicBool>,
+pub struct Handlers {
+    handlers: HashMap<String, Handler>,
 }
 
-impl ServerHandle {
+impl Handlers {
     fn new() -> Self {
-        ServerHandle {
-            handlers: Arc::new(RwLock::new(HashMap::new())),
-            is_shutdown: Arc::new(false.into()),
+        Handlers {
+            handlers: HashMap::new(),
         }
     }
 
     /// Add a handler for a given method or notification.
-    pub fn add(&self, method: String, handler: Handler) -> result::Result<(), HandlerSettingError> {
-        if self.is_shutdown.load(atomic::Ordering::SeqCst) {
-            return Err(HandlerSettingError::shutdown(handler));
-        };
-
-        let mut map = self.handlers.write().unwrap();
-        if map.contains_key(&method) {
+    pub fn add(
+        &mut self,
+        method: String,
+        handler: Handler,
+    ) -> result::Result<(), HandlerSettingError> {
+        if self.handlers.contains_key(&method) {
             return Err(HandlerSettingError::already_exists(handler));
         };
 
-        map.insert(method, handler);
+        self.handlers.insert(method, handler);
         Ok(())
     }
 
     /// Remove a handler for a given method or notification.
-    pub fn remove(&self, method: &str) -> result::Result<(), HandleError> {
-        if self.is_shutdown.load(atomic::Ordering::SeqCst) {
-            return Err(HandleError::Shutdown);
-        };
-
-        let mut map = self.handlers.write().unwrap();
-
-        if map.remove(method).is_some() {
-            Ok(())
+    pub fn remove(&mut self, method: &str) -> result::Result<Handler, HandlerError> {
+        if let Some(handler) = self.handlers.remove(method) {
+            Ok(handler)
         } else {
-            Err(HandleError::NoHandler)
+            Err(HandlerError::NoHandler)
         }
     }
 
     fn shutdown(&mut self) {
-        self.is_shutdown.store(true, atomic::Ordering::SeqCst);
-        self.handlers.write().unwrap().clear();
-    }
-
-    fn is_poisoned(&self) -> bool {
-        self.handlers.is_poisoned()
+        self.handlers.clear();
     }
 
     fn handle_single_call(&self, call: Call) -> PendingCall {
@@ -188,9 +176,7 @@ impl ServerHandle {
     }
 
     fn handle_method_call(&self, method_call: MethodCall) -> PendingCall {
-        let handlers = self.handlers.read().unwrap();
-
-        match handlers.get(&method_call.method) {
+        match self.handlers.get(&method_call.method) {
             Some(Handler::Method(handler)) => Box::new(handler(method_call).map(Some)),
             _ => Box::new(future::ok(Some(failure(
                 method_call.id,
@@ -200,8 +186,7 @@ impl ServerHandle {
     }
 
     fn handle_notification_call(&self, notification: Notification) -> PendingCall {
-        let handlers = self.handlers.read().unwrap();
-        match handlers.get(&notification.method) {
+        match self.handlers.get(&notification.method) {
             Some(Handler::Notification(handler)) => Box::new(handler(notification).map(|_| None)),
             _ => Box::new(future::ok(None)),
         }
@@ -209,19 +194,13 @@ impl ServerHandle {
 }
 
 
-impl fmt::Debug for ServerHandle {
+impl fmt::Debug for Handlers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ServerHandle{{\n")?;
-        match self.handlers.read() {
-            Ok(handlers) => {
-                for (method_name, callback) in handlers.iter() {
-                    write!(f, "\t{} - {}\n", method_name, callback.description())?;
-                }
-            }
-            Err(e) => {
-                write!(f, "ERROR - POISONED MUTEX  - {}\n", e)?;
-            }
+        write!(f, "Handlers{{\n")?;
+        for (method_name, callback) in self.handlers.iter() {
+            write!(f, "\t{} - {}\n", method_name, callback.description())?;
         }
+
         write!(f, "}}")
     }
 }
@@ -234,21 +213,84 @@ fn failure(id: Id, error: RpcError) -> Output {
     })
 }
 
+#[derive(Debug)]
+enum HandlerMsg {
+    AddHandler(
+        String,
+        Handler,
+        oneshot::Sender<result::Result<(), HandlerSettingError>>,
+    ),
+    RemoveHandler(
+        String,
+        oneshot::Sender<result::Result<Handler, HandlerError>>,
+    ),
+}
+
+/// Dynamically sets and unsets new handlers for method calls and notifications
+#[derive(Debug, Clone)]
+pub struct ServerHandle {
+    tx: mpsc::Sender<HandlerMsg>,
+}
+
+impl ServerHandle {
+    /// Sets a new handler
+    pub fn add(
+        &self,
+        name: String,
+        handler: Handler,
+    ) -> impl Future<Item = (), Error = HandlerSettingError> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.tx
+            .clone()
+            .send(HandlerMsg::AddHandler(name, handler, result_tx))
+            .map_err(|e| {
+                let handler = match e.into_inner() {
+                    HandlerMsg::AddHandler(_, handler, _) => handler,
+                    _ => unreachable!(),
+                };
+                HandlerSettingError::shutdown(handler)
+            })
+            // since the channel is not buffered, if the message is received, the only circumstance
+            // when receiving a result back would fail is if a panic occurs while adding the
+            // handler.
+            .and_then(|_| result_rx.map_err(|_| unreachable!()))
+            .and_then(|r| future::result(r))
+    }
+
+    /// Unsets a handler
+    pub fn remove(&self, name: String) -> impl Future<Item = Handler, Error = HandlerError> {
+        let (result_tx, result_rx) = oneshot::channel();
+        self.tx
+            .clone()
+            .send(HandlerMsg::RemoveHandler(name, result_tx))
+            .map_err(|_| HandlerError::Shutdown)
+            .and_then(|_| result_rx.map_err(|_| HandlerError::Shutdown))
+            .and_then(|r| future::result(r))
+    }
+}
+
+
 /// Default server implementation.
 pub struct Server {
-    handler_map: ServerHandle,
+    handler_chan: Option<mpsc::Receiver<HandlerMsg>>,
+    handler_map: Handlers,
     pending_futures: BTreeMap<u64, DrivableCall>,
     id_generator: IdGenerator,
 }
 
 impl Server {
     /// Constructs a new server.
-    pub fn new() -> Self {
-        Self {
-            handler_map: ServerHandle::new(),
-            pending_futures: BTreeMap::new(),
-            id_generator: IdGenerator::new(),
-        }
+    pub fn new() -> (Self, ServerHandle) {
+        let (tx, rx) = mpsc::channel(0);
+        (
+            Self {
+                handler_map: Handlers::new(),
+                pending_futures: BTreeMap::new(),
+                id_generator: IdGenerator::new(),
+                handler_chan: Some(rx),
+            },
+            ServerHandle { tx },
+        )
     }
 
     fn push_future(&mut self, driveable_future: DrivableCall) {
@@ -256,9 +298,33 @@ impl Server {
             .insert(self.id_generator.next_int(), driveable_future);
     }
 
-    /// Access handler collection to add or remove handlers.
-    pub fn get_handle(&self) -> ServerHandle {
-        self.handler_map.clone()
+    fn drain_handler_chan(&mut self) {
+        let mut finished = false;
+        if let Some(chan) = self.handler_chan.as_mut() {
+            let mut drained = false;
+            while !drained && !finished {
+                match chan.poll() {
+                    Ok(Async::NotReady) => {
+                        drained = true;
+                    }
+                    Ok(Async::Ready(Some(msg))) => match msg {
+                        HandlerMsg::AddHandler(name, handler, tx) => {
+                            let _ = tx.send(self.handler_map.add(name, handler));
+                        }
+                        HandlerMsg::RemoveHandler(name, tx) => {
+                            let _ = tx.send(self.handler_map.remove(&name));
+                        }
+                    },
+                    Err(_) => unreachable!(),
+                    Ok(Async::Ready(None)) => {
+                        finished = true;
+                    }
+                }
+            }
+        };
+        if finished {
+            self.handler_chan = None;
+        }
     }
 }
 
@@ -267,9 +333,7 @@ impl Future for Server {
     type Error = Error;
 
     fn poll(&mut self) -> Result<Async<()>> {
-        if self.handler_map.is_poisoned() {
-            return Err(ErrorKind::Shutdown.into());
-        }
+        self.drain_handler_chan();
         let polled: Result<Vec<(u64, Async<()>)>> = self
             .pending_futures
             .iter_mut()

@@ -272,7 +272,8 @@ impl<T: Transport> Client<T, server::Server> {
     /// will resolve without an error. The client will resolve once all of it's handles and
     /// corresponding futures get resolved.
     pub fn new(transport: T) -> (Self, ClientHandle) {
-        Self::new_with_server(transport, server::Server::new())
+        let (server, _) = server::Server::new();
+        Self::new_with_server(transport, server)
     }
 }
 
