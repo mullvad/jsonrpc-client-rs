@@ -40,6 +40,7 @@ error_chain!{
 
     foreign_links {
         HandlerError(HandlerSettingError);
+        SpawnError(tokio::executor::SpawnError);
     }
 }
 
@@ -167,28 +168,29 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
     ) -> Result<mpsc::UnboundedSender<SubscriberMsg>> {
         let (msg_tx, msg_rx) = mpsc::channel(0);
 
-        self.handlers.add(
-            notification_method.clone(),
-            Handler::Notification(Box::new(move |notification| {
-                let fut = match params_to_subscription_message(notification.params) {
-                    Some(msg) => Either::A(
-                        msg_tx
-                            .clone()
-                            .send(msg)
-                            .map(|_| ())
-                            .map_err(|_| CoreErrorKind::Shutdown.into()),
-                    ),
-                    None => {
-                        error!(
+        self.handlers
+            .add(
+                notification_method.clone(),
+                Handler::Notification(Box::new(move |notification| {
+                    let fut = match params_to_subscription_message(notification.params) {
+                        Some(msg) => Either::A(
+                            msg_tx
+                                .clone()
+                                .send(msg)
+                                .map(|_| ())
+                                .map_err(|_| CoreErrorKind::Shutdown.into()),
+                        ),
+                        None => {
+                            error!(
                             "Received notification with invalid parameters for subscription - {}",
                             notification.method
                         );
-                        Either::B(futures::future::ok(()))
-                    }
-                };
-                Box::new(fut)
-            })),
-        )?;
+                            Either::B(futures::future::ok(()))
+                        }
+                    };
+                    Box::new(fut)
+                })),
+            ).wait()?;
 
         let (control_tx, control_rx) = mpsc::unbounded();
         let notification_handler = NotificationHandler::new(
@@ -258,7 +260,9 @@ struct NotificationHandler {
 
 impl Drop for NotificationHandler {
     fn drop(&mut self) {
-        let _ = self.server_handlers.remove(&self.notification_method);
+        let _ = self
+            .server_handlers
+            .remove(self.notification_method.clone());
     }
 }
 
@@ -396,10 +400,9 @@ impl<T: DuplexTransport> SubscriberTransport for T {
         ClientHandle,
         Subscriber<E>,
     ) {
-        let server = Server::new();
-        let handlers = server.get_handle();
+        let (server, server_handle) = Server::new();
         let (client, client_handle) = self.with_server(server);
-        let subscriber = Subscriber::new(executor, client_handle.clone(), handlers);
+        let subscriber = Subscriber::new(executor, client_handle.clone(), server_handle);
         (client, client_handle, subscriber)
     }
 }
