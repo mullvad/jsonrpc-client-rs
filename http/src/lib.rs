@@ -339,7 +339,7 @@ impl<F: Future<Error = Error>> Future for TimeLimited<F> {
 fn create_standalone_core<C: ClientCreator>(
     client_creator: &C,
     timeout: Option<Duration>,
-) -> Result<(Core, CoreSender, Box<Future<Item = (), Error = ()>>)> {
+) -> Result<(Core, CoreSender, Box<dyn Future<Item = (), Error = ()>>)> {
     let core = Core::new().chain_err(|| ErrorKind::TokioCoreError("Unable to create"))?;
     let handle = core.handle();
     let client = client_creator
@@ -357,7 +357,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
     client: Client<CC, hyper::Body>,
     timeout: Option<Duration>,
     handle: Handle,
-) -> Box<Future<Item = (), Error = ()>> {
+) -> Box<dyn Future<Item = (), Error = ()>> {
     let f = request_rx.for_each(move |(request, response_tx)| {
         trace!("Sending request to {}", request.uri());
         let request = client.request(request).from_err();
@@ -378,7 +378,7 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
                 Ok(())
             })
     });
-    Box::new(f) as Box<Future<Item = (), Error = ()>>
+    Box::new(f) as Box<dyn Future<Item = (), Error = ()>>
 }
 
 /// A handle to a [`HttpTransport`](struct.HttpTransport.html). This implements
@@ -436,15 +436,18 @@ impl HttpHandle {
 
     /// Sends an HTTP request with the given body, returning a future that will resolve to the
     /// corresponding response.
-    pub fn send(&self, json_data: Vec<u8>) -> Box<Future<Item = Vec<u8>, Error = Error> + Send> {
+    pub fn send(
+        &self,
+        json_data: Vec<u8>,
+    ) -> Box<dyn Future<Item = Vec<u8>, Error = Error> + Send> {
         Box::new(self.send_fut(json_data))
     }
 }
 
 impl Transport for HttpHandle {
     type Error = Error;
-    type Sink = Box<Sink<SinkItem = String, SinkError = Self::Error>>;
-    type Stream = Box<Stream<Item = String, Error = Self::Error>>;
+    type Sink = Box<dyn Sink<SinkItem = String, SinkError = Self::Error> + Send>;
+    type Stream = Box<dyn Stream<Item = String, Error = Self::Error> + Send>;
 
     fn io_pair(self) -> (Self::Sink, Self::Stream) {
         let (tx, rx) = mpsc::channel(0);

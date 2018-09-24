@@ -9,7 +9,7 @@ extern crate tokio;
 extern crate tokio_io;
 
 use futures::stream::Stream;
-use jsonrpc_client_core::{Transport, DuplexTransport};
+use jsonrpc_client_core::{DuplexTransport, Transport};
 use jsonrpc_server_utils::codecs;
 use parity_tokio_ipc::IpcConnection;
 use tokio::reactor::Handle;
