@@ -29,11 +29,11 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
-use tokio::executor::Executor;
+use tokio::prelude::future::Executor;
 
 use jsonrpc_client_utils::select_weak::{SelectWithWeak, SelectWithWeakExt};
 
-error_chain!{
+error_chain! {
     links {
         Core(CoreError, CoreErrorKind);
     }
@@ -86,7 +86,7 @@ impl<T: serde::de::DeserializeOwned> Drop for Subscription<T> {
 
 /// A subscriber creates new subscriptions.
 #[derive(Debug)]
-pub struct Subscriber<E: Executor + Clone + Send + 'static> {
+pub struct Subscriber<E: Executor<Box<Future<Item = (), Error = ()> + Send>>> {
     client_handle: ClientHandle,
     handlers: ServerHandle,
     notification_handlers: BTreeMap<String, mpsc::UnboundedSender<SubscriberMsg>>,
@@ -94,7 +94,7 @@ pub struct Subscriber<E: Executor + Clone + Send + 'static> {
 }
 
 
-impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
+impl<E: Executor<Box<Future<Item = (), Error = ()> + Send>> + Send + Sized> Subscriber<E> {
     /// Constructs a new subscriber with the provided executor.
     pub fn new(executor: E, client_handle: ClientHandle, handlers: ServerHandle) -> Self {
         let notification_handlers = BTreeMap::new();
@@ -190,7 +190,8 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
                     };
                     Box::new(fut)
                 })),
-            ).wait()?;
+            )
+            .wait()?;
 
         let (control_tx, control_rx) = mpsc::unbounded();
         let notification_handler = NotificationHandler::new(
@@ -204,9 +205,9 @@ impl<E: Executor + Clone + Send + 'static> Subscriber<E> {
 
         if let Err(e) = self
             .executor
-            .spawn(Box::new(notification_handler.map_err(|_| ())))
+            .execute(Box::new(notification_handler.map_err(|_| ())))
         {
-            error!("Failed to spawn notification handler - {}", e);
+            error!("Failed to spawn notification handler - {:?}", e);
         };
 
         self.notification_handlers
@@ -377,7 +378,7 @@ impl Future for NotificationHandler {
 /// A trait for constructing the usual client handles with coupled `Subscriber` structs.
 pub trait SubscriberTransport: DuplexTransport {
     /// Constructs a new client, client handle and a subscriber.
-    fn subscriber_client<E: Executor + Clone + Send>(
+    fn subscriber_client<E: Executor<Box<Future<Item = (), Error = ()> + Send>> + Send + Sized>(
         self,
         executor: E,
     ) -> (
@@ -392,7 +393,7 @@ pub trait SubscriberTransport: DuplexTransport {
 /// handle from a valid JSON-RPC transport.
 impl<T: DuplexTransport> SubscriberTransport for T {
     /// Constructs a new client, client handle and a subscriber.
-    fn subscriber_client<E: Executor + Clone + Send>(
+    fn subscriber_client<E: Executor<Box<Future<Item = (), Error = ()> + Send>> + Send>(
         self,
         executor: E,
     ) -> (
