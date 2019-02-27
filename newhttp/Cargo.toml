@@ -22,6 +22,10 @@ tokio-timer = "0.2.10"
 hyper-rustls = "0.16"
 tokio = "0.1"
 env_logger = "0.6.0"
+jsonrpc-core = "10.0"
+jsonrpc-derive = "10.0"
+jsonrpc-http-server = "10.0"
+serde = "1.0"
 
 [badges]
 travis-ci = { repository = "mullvad/jsonrpc-client-rs" }
