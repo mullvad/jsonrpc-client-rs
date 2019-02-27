@@ -191,14 +191,15 @@ impl ClientHandle {
                 rpc_chan
                     .send(OutgoingMessage::Notification(method, params, tx))
                     .map_err(|_| ErrorKind::Shutdown.into())
-            }).and_then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
+            })
+            .and_then(|_| rx.map_err(|_| Error::from(ErrorKind::Shutdown)))
             .flatten()
     }
 }
 
 
 /// A Transport allows one to send and receive JSON objects to a JSON-RPC server.
-pub trait Transport: Sized + Send{
+pub trait Transport: Sized + Send {
     /// A transport specific error
     type Error: ::std::error::Error + Send + 'static;
     /// A stream of strings, each of which represent a single JSON value that is either an array or
