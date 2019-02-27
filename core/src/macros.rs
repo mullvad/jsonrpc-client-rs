@@ -8,7 +8,7 @@
 
 /// The main macro of this crate. Generates JSON-RPC 2.0 client structs with automatic serialization
 /// and deserialization. Method calls get correct types automatically.
-#[macro_export]
+#[macro_export(local_inner_macros)]
 macro_rules! jsonrpc_client {
     (
         $(#[$struct_attr:meta])*
@@ -34,7 +34,7 @@ macro_rules! jsonrpc_client {
                 pub fn $method(&mut $selff $(, $arg_name: $arg_ty)*)
                     -> impl $crate::Future<Item = $return_ty, Error = $crate::Error> + 'static
                 {
-                    let method = String::from(stringify!($method));
+                    let method = String::from(stringify_internal!($method));
                     let raw_params = expand_params!($($arg_name,)*);
                     let params = $crate::serialize_parameters(&raw_params);
                     let (tx, rx) = $crate::oneshot::channel();
@@ -46,6 +46,11 @@ macro_rules! jsonrpc_client {
     )
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! stringify_internal {
+    ($($t:tt)*) => (stringify!($($t)*))
+}
 
 /// Expands a variable list of parameters into its serializable form. Is needed to make the params
 /// of a nullary method equal to `[]` instead of `()` and thus make sure it serializes to `[]`

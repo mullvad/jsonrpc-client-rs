@@ -375,7 +375,8 @@ impl ServerHandler for Server {
                     requests
                         .into_iter()
                         .map(|call| self.handler_map.handle_single_call(call)),
-                ).filter_map(|maybe_response| maybe_response)
+                )
+                .filter_map(|maybe_response| maybe_response)
                 .collect()
                 .and_then(|results| {
                     if results.len() > 0 {

@@ -369,7 +369,8 @@ fn create_request_processing_future<CC: hyper::client::Connect>(
                 } else {
                     future::err(ErrorKind::HttpError(response.status()).into())
                 }
-            }).and_then(|response: hyper::Response| response.body().concat2().from_err())
+            })
+            .and_then(|response: hyper::Response| response.body().concat2().from_err())
             .map(|response_chunk| response_chunk.to_vec())
             .then(move |response_result| {
                 if response_tx.send(response_result).is_err() {
@@ -421,14 +422,16 @@ impl HttpHandle {
         future::result(self.request_tx.unbounded_send((request, response_tx)))
             .map_err(|e| {
                 Error::with_chain(e, ErrorKind::TokioCoreError("Not listening for requests"))
-            }).and_then(move |_| {
+            })
+            .and_then(move |_| {
                 response_rx.map_err(|e| {
                     Error::with_chain(
                         e,
                         ErrorKind::TokioCoreError("Died without returning response"),
                     )
                 })
-            }).and_then(|r| {
+            })
+            .and_then(|r| {
                 trace!("RECEIVED RESPONSE FROM HYPER - {:?}", r);
                 future::result(r)
             })
@@ -482,7 +485,8 @@ mod tests {
     fn new_custom_client() {
         HttpTransportBuilder::with_client(|handle: &Handle| {
             Ok(Client::configure().keep_alive(false).build(handle)) as Result<_>
-        }).standalone()
+        })
+        .standalone()
         .unwrap();
     }
 
@@ -491,7 +495,8 @@ mod tests {
         let error = HttpTransportBuilder::with_client(|_: &Handle| {
             Err(io::Error::new(io::ErrorKind::Other, "Dummy error"))
                 as ::std::result::Result<Client<HttpConnector, hyper::Body>, io::Error>
-        }).standalone()
+        })
+        .standalone()
         .unwrap_err();
         match error.kind() {
             &ErrorKind::ClientCreatorError => (),
