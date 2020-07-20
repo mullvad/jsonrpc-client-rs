@@ -7,7 +7,7 @@ authors = ["Emīls Piņķis <emils@mullvad.net>"]
 futures = "0.1"
 jsonrpc-server-utils = "8"
 jsonrpc-client-core = { version = "0.5", path = "../core" }
-parity-tokio-ipc = { git = "https://github.com/nikvolf/parity-tokio-ipc", rev = "2bfc4354fda235f0249b963853701e1571f04dbc" }
+parity-tokio-ipc = { git = "https://github.com/nikvolf/parity-tokio-ipc", rev = "f6892fa" }
 tokio = "0.1"
 tokio-core = "0.1"
 tokio-io = "0.1"
