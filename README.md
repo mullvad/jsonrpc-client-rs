@@ -1,5 +1,7 @@
 # jsonrpc-client-core
 
+> NOTE: This crate is deprecated. No new feature development will happen in this crate.
+
 A crate for generating transport agnostic, auto serializing, strongly typed JSON-RPC 2.0
 clients.
 
